@@ -1,44 +1,147 @@
-# Sample: expense approvals
+# Expense approvals, a carrydown sample
 
-This is a sample. The project is fictional. The people, the company and the numbers are made up. Replace all of it with your own material.
+This repository is a sample. It holds the ground-truth document for a fictional expense approvals service, and everything the [carrydown](https://github.com/sct-will/carrydown) skills produced from it: a plan, one specification per work item, a developer skill, and, on GitHub, the issues and a public project board. The people, the company, the dates and the names are fictional.
 
-It shows what the three carrydown skills produce from a short ground truth.
+## Renderings
 
-This folder is published twice. It lives in the main carrydown repository at `sample/expense-approvals/`, and it is the root of the repository https://github.com/sct-will/carrydown-sample, where the carrydown scripts created the real issues and the project board from this plan. Read the summary in `docs/sample.md` of the main carrydown repository.
+These are renderings of the sample output, not screenshots. The item names in the pictures differ slightly from the live sample.
+
+![A rendering of the project board as a table grouped by work unit](docs/images/board-table.png)
+
+*Rendering of the sample output: the board as a table, grouped by work unit.*
+
+![A rendering of the project board as a roadmap](docs/images/board-roadmap.png)
+
+*Rendering of the sample output: the roadmap, with work units of different lengths.*
+
+![A rendering of one issue next to the specification file it links to](docs/images/issue-and-spec.png)
+
+*Rendering of the sample output: one issue and the spec file the agent reads first.*
+
+## Live links
+
+- The issues the skills created: https://github.com/sct-will/carrydown-sample/issues. The Epic is issue 1, the five sub-epics are issues 2 to 6 and the nine work items are issues 7 to 15.
+- The public project board: https://github.com/users/sct-will/projects/2
+
+## The dry run
+
+Before anything was written to GitHub, the dry run printed this summary line.
+
+```text
+1 Epic, 5 sub-epics, 9 work item issues
+```
+
+After the write, the verification step checked the counts through GitHub.
+
+| Thing | Count |
+| --- | --- |
+| Labels | 4 |
+| Epic | 1 (issue 1) |
+| Sub-epics | 5 (issues 2 to 6) |
+| Work item issues | 9 (issues 7 to 15) |
+| Sub-issue links | 14 |
+| Board items | 15 |
+| Board fields filled | Work unit on 14, Track on 9, Complete by on 14, Checkpoint on 14 |
+| Board views | Table, Board, Roadmap |
+| Work unit iterations | 5, with the pause week left as a break |
+
+## Plan
+
+The checker's report on the plan: the schedule, the load table, the critical path, the program items and the checkpoints. The checker found 15 files clean and 0 findings.
+
+```text
+Plan: Expense approvals
+
+Schedule
+  Work unit 1, Submit an expense report: 2027-02-01 to 2027-02-12 (demonstration 2027-02-12)
+  Work unit 2, Route to approvers: 2027-02-15 to 2027-03-05 (demonstration 2027-03-05)
+  Work unit 3, Enforce policy: 2027-03-08 to 2027-03-19 (demonstration 2027-03-19)
+  Work unit 4, Pilot with one team: 2027-03-29 to 2027-04-09 (demonstration 2027-04-09)
+  Work unit 5, Release: 2027-04-12 to 2027-04-23 (demonstration 2027-04-23)
+  Break, Offsite and planning week: 2027-03-22 to 2027-03-26
+
+Load (items per person per work unit, with sized days where the size says 'about N days')
+  Person  WU1     WU2     WU3     WU4     WU5     Total  
+  tamsin  1 (3d)  1 (5d)  2 (6d)  1 (4d)  0       5 (18d)
+  idris   1 (4d)  1 (4d)  1 (4d)  0       1 (3d)  4 (15d)
+
+Critical path (longest dependency chain to the last item)
+  WI-02 -> WI-04 -> WI-08 -> WI-11  (79 calendar days)
+    WI-02 Report form and receipt upload, by 2027-02-10, idris
+    WI-04 Approver inbox and decisions, by 2027-03-03, idris
+    WI-08 Notifications and delegates, by 2027-03-18, idris
+    WI-11 Release readiness and runbook, by 2027-04-21, idris
+
+Program-owned items (outside the development plan; referenced only as program input)
+  WI-05 Pilot team recruitment
+  WI-10 Finance sign-off
+
+Checkpoints
+  2027-02-05  Contract freeze: WI-01
+  2027-02-12  Milestone 1 demonstration: WI-02
+  2027-02-26  Routing meets inbox: WI-03
+  2027-03-05  Milestone 2 demonstration: WI-04
+  2027-03-12  Rules meet routing: WI-06
+  2027-03-19  Milestone 3 demonstration: WI-07, WI-08
+  2027-04-09  Pilot readout: WI-09
+  2027-04-23  Release: WI-11
+```
 
 ## What is here
 
 | Path | What it is | Made by |
 | --- | --- | --- |
-| `ground-truth/architecture.md` | The source document. About eight pages: context, requirements, architecture, two governance rules, a development standard, a business analyst note, interfaces and risks. | You |
-| `people.yaml` | Two people with tracks, days off, and an advisor. | The interview |
-| `timeline.yaml` | Start date, target date, 11 weeks of work, a pause week, the program-owned items, conventions. | The interview |
-| `docs/ground-truth/architecture.md` | The rendering with a section index. | `render_ground_truth.py` |
-| `docs/ground-truth/architecture.index.txt` | One line per heading with its line number. | `render_ground_truth.py` |
-| `docs/spec/plan.yaml` | The plan: five milestones, nine work items, two tracks, one pause, checkpoints. | You and the agent |
-| `docs/spec/README.md` | Conventions, schedule, comment templates and the index. | `scaffold_spec.py` |
-| `docs/spec/m*/milestone.md` | One file per milestone: the sub-epic content. | `scaffold_spec.py`, then written |
-| `docs/spec/m*/wi-NN-*.md` | One specification per work item. | `scaffold_spec.py --stubs`, then written |
-| `docs/dev/skills/expense-approvals-dev/` | The developer skill for this project. | `generate_dev_skill.py` |
-| `.github/workflows/check-specs.yml` and `tools/carrydown/` | The checker in continuous integration, and its copy. | `scaffold_spec.py --ci` |
+| [ground-truth/architecture.md](ground-truth/architecture.md) | The source document: context, requirements, architecture, two governance rules, a development standard, a business analyst note, interfaces and risks. | A person |
+| [people.yaml](people.yaml), [timeline.yaml](timeline.yaml) | Two people with tracks, an advisor, eleven weeks and a pause week. | The interview |
+| [docs/ground-truth/architecture.md](docs/ground-truth/architecture.md) | The rendering with a section index. | `render_ground_truth.py` |
+| [docs/spec/plan.yaml](docs/spec/plan.yaml) | The plan: five milestones, nine work items, two tracks, checkpoints. | A person and the agent |
+| [docs/spec/README.md](docs/spec/README.md) | Conventions, schedule, comment templates and the index. | `scaffold_spec.py` |
+| [docs/dev/skills/expense-approvals-dev](docs/dev/skills/expense-approvals-dev/SKILL.md) | The developer skill for this project. | `generate_dev_skill.py` |
+| [tools/carrydown](tools/carrydown/check_specs.py) | The checker, copied here so it can run in continuous integration. | `scaffold_spec.py --ci` |
+
+The milestone files and one specification per work item:
+
+- [Milestone 1, Submit an expense report](docs/spec/m1-submit-report/milestone.md)
+  - [WI-01 Service scaffold, flag and API contract](docs/spec/m1-submit-report/wi-01-service-scaffold.md)
+  - [WI-02 Report form and receipt upload](docs/spec/m1-submit-report/wi-02-report-form.md)
+- [Milestone 2, Route to approvers](docs/spec/m2-route-to-approvers/milestone.md)
+  - [WI-03 Approval routing engine](docs/spec/m2-route-to-approvers/wi-03-routing-engine.md)
+  - [WI-04 Approver inbox and decisions](docs/spec/m2-route-to-approvers/wi-04-approver-inbox.md)
+- [Milestone 3, Enforce policy](docs/spec/m3-enforce-policy/milestone.md)
+  - [WI-06 Approval limits and separation of duties](docs/spec/m3-enforce-policy/wi-06-limits-and-duties.md)
+  - [WI-07 Audit log and retention](docs/spec/m3-enforce-policy/wi-07-audit-log.md)
+  - [WI-08 Notifications and delegates](docs/spec/m3-enforce-policy/wi-08-notifications-delegates.md)
+- [Milestone 4, Pilot with one team](docs/spec/m4-pilot/milestone.md)
+  - [WI-09 Ledger export job](docs/spec/m4-pilot/wi-09-ledger-export.md)
+- [Milestone 5, Release](docs/spec/m5-release/milestone.md)
+  - [WI-11 Release readiness and runbook](docs/spec/m5-release/wi-11-release-readiness.md)
 
 Ids 5 and 10 are missing on purpose. They belong to the program (pilot team recruitment, finance sign-off) and appear in the specifications only as a "program input".
 
-## Run it
+## Run it again
 
-From the root of the repository. The renderer example writes to a separate folder, `my-test/`, so it does not overwrite the shipped sample. Delete that folder when you are done.
+Clone both repositories side by side. These three commands need no token and no network access to GitHub.
 
 ```bash
-python3 scripts/render_ground_truth.py sample/expense-approvals/ground-truth/architecture.md --root sample/expense-approvals --out-dir ../../my-test/ground-truth --version 0.3
-python3 scripts/check_specs.py --root sample/expense-approvals
-python3 scripts/check_specs.py --root sample/expense-approvals --report
-python3 scripts/github_sync.py --root sample/expense-approvals --offline
-python3 scripts/github_sync.py --root sample/expense-approvals --repo YOUR-USER/YOUR-TEST-REPO
-python3 scripts/github_project.py --root sample/expense-approvals --repo YOUR-USER/YOUR-TEST-REPO
+git clone https://github.com/sct-will/carrydown.git
+git clone https://github.com/sct-will/carrydown-sample.git
+cd carrydown
+python3 scripts/check_specs.py --root ../carrydown-sample --report
+python3 scripts/github_sync.py --root ../carrydown-sample --offline
+python3 scripts/github_project.py --root ../carrydown-sample --offline
 ```
 
-The first three need no token and no network. The `--offline` form of `github_sync.py` shows the plan without a token and without reading GitHub. The full dry run on the last two lines reads GitHub, so it needs a token (run `python3 scripts/github_token.py` first) and a repository that exists. Both are dry runs. Use a throwaway repository of your own, and add `--apply` only when you have read what they would do. `docs/sample-run.md` at the top of the repository shows a real run.
+To see the dry runs against GitHub, store a token with `python3 scripts/github_token.py` and name a throwaway repository of your own. Both commands are dry runs until you add `--apply`.
 
-## Make it yours
+```bash
+python3 scripts/github_sync.py --root ../carrydown-sample --repo YOUR-USER/YOUR-TEST-REPO
+python3 scripts/github_project.py --root ../carrydown-sample --repo YOUR-USER/YOUR-TEST-REPO
+```
 
-Copy the folder, replace `ground-truth/architecture.md` with your document, and say to your agent: "Set up a project plan from this document." Put "Use the carrydown-ground-truth skill." in front if it does not pick the skill up.
+## Back to carrydown
+
+The skills and scripts are at https://github.com/sct-will/carrydown. The README there explains how to install them and how to use your own document.
+
+## Licence
+
+The scripts in `tools/` are licensed under the Apache License 2.0, see [LICENSE](LICENSE). The ground-truth document, the plan, the specifications, the developer skill and the images are licensed under Creative Commons Attribution 4.0 International, see [LICENSE-CONTENT.md](LICENSE-CONTENT.md). Copyright 2026 Will Scott.
