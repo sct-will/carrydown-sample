@@ -1,6 +1,16 @@
 # Expense approvals, a carrydown sample
 
-This repository is a sample. It holds the ground-truth document for a fictional expense approvals service, and everything the [carrydown](https://github.com/sct-will/carrydown) skills produced from it: a plan, one specification per work item, a developer skill, and, on GitHub, the issues and a public project board. The people, the company, the dates and the names are fictional.
+This is what [carrydown](https://github.com/sct-will/carrydown) made from one document. The ground truth is a short architecture document for a fictional expense approvals service, with its requirements, two governance rules, a development standard and a business analyst note, and the company, the people and the dates are invented. Everything else here is real output of the skills: the plan, one specification per work item, the developer skill, and on GitHub the issues and a public project board.
+
+Start with one work item. WI-03, the approval routing engine, is a GitHub issue whose AI engineering notes link to its specification, and that specification cites sections 3.4, 3.5 and 7.1 of the document. That chain, from issue to specification to paragraph, is what an engineer's coding agent reads before it changes code.
+
+[![Work item WI-03 as a GitHub issue, beside the specification file its AI engineering notes link to, which cites ground truth sections 3.4, 3.5 and 7.1.](docs/images/issue-and-spec.png)](https://github.com/sct-will/carrydown-sample/issues/9)
+
+**Look.** Open the [public board](https://github.com/users/sct-will/projects/2), click WI-03, then follow its specification link to the sections it cites. No account and no install.
+
+**Try.** [Open carrydown in a Codespace](https://codespaces.new/sct-will/carrydown), a ready-made computer in your browser. As it starts it runs the checker on a copy of this sample and prints the schedule, the load table and the critical path, then a dry run of the issues it would create.
+
+**Install.** Run `npx skills add sct-will/carrydown` in a project folder, put `ground-truth/architecture.md` from this repository in `docs/source/`, and tell your agent "Set up a project plan from this document." Compare your plan with this one. Nothing is written to GitHub until you say yes.
 
 ## Renderings
 
@@ -10,7 +20,7 @@ These are renderings of the live sample output, drawn from this repository's pla
 
 *The board as a table, grouped by work unit. The live board has the same fields; group it by Work unit to see this layout.*
 
-![Work item WI-03, issue 9, beside the specification file its AI engineering notes link to](docs/images/issue-and-spec.png)
+
 
 *Rendering of the sample output: one issue and the spec file the agent reads first.*
 
