@@ -16,6 +16,6 @@ You may share and adapt this content for any purpose, including commercial use, 
 Licence text: https://creativecommons.org/licenses/by/4.0/legalcode
 Plain-language summary: https://creativecommons.org/licenses/by/4.0/
 
-A suitable credit line is: "Carrydown sample, by Will Scott, https://github.com/sct-will/carrydown-sample, licensed under CC BY 4.0."
+A suitable credit line is: "carrydown sample, by Will Scott, https://github.com/sct-will/carrydown-sample, licensed under CC BY 4.0."
 
 The code in this repository, that is the Python scripts in `tools/carrydown/`, copied from [carrydown](https://github.com/sct-will/carrydown), is licensed under the Apache License 2.0. See the file `LICENSE`.
