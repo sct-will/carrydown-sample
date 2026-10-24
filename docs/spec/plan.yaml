@@ -242,7 +242,7 @@ items:
     size: "Medium, about 4 days"
     depends: [7]
     checkpoint: 2027-04-09
-    program_input: "the pilot team, named by the program"
+    external_input: "the pilot team, named by the stakeholders"
     ground_truth: "Sections 3.6, 4.2, 7.3"
   - id: 11
     slug: release-readiness
@@ -255,14 +255,14 @@ items:
     size: "Medium, about 3 days"
     depends: [8, 9]
     checkpoint: 2027-04-23
-    program_input: "finance sign-off on the export format and retention period"
+    external_input: "finance sign-off on the export format and retention period"
     ground_truth: "Sections 5.1, 8.1"
 
-program:
+external:
   items:
     - id: 5
       label: "Pilot team recruitment"
-      note: "The program names the pilot team and confirms their cost centres before work unit 4."
+      note: "The stakeholders name the pilot team and confirm their cost centres before work unit 4."
     - id: 10
       label: "Finance sign-off"
       note: "Finance operations approves the export format and the retention period before the release."
