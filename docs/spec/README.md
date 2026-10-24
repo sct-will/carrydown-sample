@@ -1,6 +1,6 @@
 # Work item specifications for Expense approvals
 
-One file per development work item, plus `milestone.md` per milestone folder. The GitHub issue for a work item links to its file here, and the milestone sub-epic links to `milestone.md`. Each file gives the developer, and the coding agent in their editor, the context needed to complete the item without opening the original ground truth documents. Where a file excerpts a contract, the excerpt is normative for the item. Where it conflicts with the ground truth, the ground truth wins and the file is corrected in the same pull request.
+One file per development work item, plus `milestone.md` per milestone folder. The GitHub issue for a work item links to its file here, and the milestone sub-epic links to `milestone.md`. Each file gives the engineer, and the coding agent in their editor, the context needed to complete the item without opening the original ground truth documents. Where a file excerpts a contract, the excerpt is normative for the item. Where it conflicts with the ground truth, the ground truth wins and the file is corrected in the same pull request.
 
 ## What is in this folder
 
@@ -38,7 +38,7 @@ The shortest route is the developer skill. It makes a coding agent read the righ
 - Documentation style in this folder. Sentence-case headings, short sentences, no em dashes or en dashes, no names of people. Owners and dates live in the GitHub issues.
 - Existing behaviour is not changed by a work item unless its file says so.
 
-Words used in every file. A work unit is a time box of variable length with an exit gate. A checkpoint is a short weekly integration check between the tracks. A demonstration is the milestone roll-up that the people give to the program. A program input is something the program provides outside this plan.
+Words used in every file. A work unit is a time box of variable length with an exit gate. A checkpoint is a short weekly integration check between the tracks. A demonstration is the milestone roll-up that the engineers give to the program. A program input is something the program provides outside this plan.
 
 ## Schedule
 
@@ -82,7 +82,7 @@ Checkpoints. A 30-minute integration check every week with all tracks present. T
 
 ### Closing comment on an issue
 
-The coding agent assembles the evidence named in the work item file. The developer checks it and posts it as the closing comment, in this shape.
+The coding agent assembles the evidence named in the work item file. The engineer checks it and posts it as the closing comment, in this shape.
 
 ```
 ## Done: EXP-NN <label>
@@ -95,7 +95,7 @@ The coding agent assembles the evidence named in the work item file. The develop
 
 ### Checkpoint comment on the Epic
 
-Posted after each checkpoint by one of the people, alternating. The outcome of a milestone demonstration is noted as a comment on its sub-epic.
+Posted after each checkpoint by one of the engineers, taking turns. The outcome of a milestone demonstration is noted as a comment on its sub-epic.
 
 ```
 ## Checkpoint <date>, <name>
@@ -123,23 +123,23 @@ Milestone 1, Submit an expense report (`m1-submit-report`), work unit 1
 
 | Id | Work item | Track | Complete by |
 | --- | --- | --- | --- |
-| [wi-01-service-scaffold](m1-submit-report/wi-01-service-scaffold.md) | Service scaffold, flag and API contract | Workflow | 2027-02-04 |
-| [wi-02-report-form](m1-submit-report/wi-02-report-form.md) | Report form and receipt upload | Experience | 2027-02-10 |
+| [wi-01-service-scaffold](m1-submit-report/wi-01-service-scaffold.md) | Service scaffold, flag and API contract | Workflow | 2027-02-03 |
+| [wi-02-report-form](m1-submit-report/wi-02-report-form.md) | Report form and receipt upload | Experience | 2027-02-12 |
 
 Milestone 2, Route to approvers (`m2-route-to-approvers`), work unit 2
 
 | Id | Work item | Track | Complete by |
 | --- | --- | --- | --- |
 | [wi-03-routing-engine](m2-route-to-approvers/wi-03-routing-engine.md) | Approval routing engine | Workflow | 2027-02-24 |
-| [wi-04-approver-inbox](m2-route-to-approvers/wi-04-approver-inbox.md) | Approver inbox and decisions | Experience | 2027-03-03 |
+| [wi-04-approver-inbox](m2-route-to-approvers/wi-04-approver-inbox.md) | Approver inbox and decisions | Experience | 2027-03-05 |
 
 Milestone 3, Enforce policy (`m3-enforce-policy`), work unit 3
 
 | Id | Work item | Track | Complete by |
 | --- | --- | --- | --- |
-| [wi-06-limits-and-duties](m3-enforce-policy/wi-06-limits-and-duties.md) | Approval limits and separation of duties | Workflow | 2027-03-12 |
+| [wi-06-limits-and-duties](m3-enforce-policy/wi-06-limits-and-duties.md) | Approval limits and separation of duties | Workflow | 2027-03-10 |
 | [wi-07-audit-log](m3-enforce-policy/wi-07-audit-log.md) | Audit log and retention | Workflow | 2027-03-17 |
-| [wi-08-notifications-delegates](m3-enforce-policy/wi-08-notifications-delegates.md) | Notifications and delegates | Experience | 2027-03-18 |
+| [wi-08-notifications-delegates](m3-enforce-policy/wi-08-notifications-delegates.md) | Notifications and delegates | Experience | 2027-03-19 |
 
 Milestone 4, Pilot with one team (`m4-pilot`), work unit 4
 

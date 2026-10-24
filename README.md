@@ -4,7 +4,7 @@ This repository is a sample. It holds the ground-truth document for a fictional 
 
 ## Renderings
 
-These are renderings of the sample output, not screenshots. The item names in the pictures differ slightly from the live sample.
+These are renderings of the sample output, not screenshots. They were drawn from an earlier version of the sample, so the item names, tracks, dates and issue numbers in the pictures differ from the live sample.
 
 ![A rendering of the project board as a table grouped by work unit](docs/images/board-table.png)
 
@@ -49,7 +49,7 @@ After the write, the verification step checked the counts through GitHub.
 
 ## Plan
 
-The checker's report on the plan: the schedule, the load table, the critical path, the program items and the checkpoints. The checker found 15 files clean and 0 findings.
+The checker's report on the plan: the schedule, the load table, the critical path, the target, the fit of each item in its window, the earliest finish, the program items and the checkpoints. The checker found 15 files clean and 0 findings.
 
 ```text
 Plan: Expense approvals
@@ -71,14 +71,27 @@ Load (sized days of work against allocated capacity, per person and work unit)
 
 Critical path (longest dependency chain to the last item)
   WI-02 -> WI-04 -> WI-08 -> WI-11  (79 calendar days)
-    WI-02 Report form and receipt upload, by 2027-02-10, idris
-    WI-04 Approver inbox and decisions, by 2027-03-03, idris
-    WI-08 Notifications and delegates, by 2027-03-18, idris
+    WI-02 Report form and receipt upload, by 2027-02-12, idris
+    WI-04 Approver inbox and decisions, by 2027-03-05, idris
+    WI-08 Notifications and delegates, by 2027-03-19, idris
     WI-11 Release readiness and runbook, by 2027-04-21, idris
 
 Target
   Target: 2027-04-23
   The critical path ends 2027-04-21: it meets the target with 2 day(s) to spare.
+
+Fit (working days each item needs, from its size and its owner's allocation, against its window)
+  Every sized item fits between its last dependency and its complete_by date.
+
+Earliest finish (forward pass over the dependencies, from sizes and allocation)
+  WI-01 -> WI-02 -> WI-04 -> WI-08 -> WI-11  ends 2027-03-12
+    WI-01 2027-02-01 to 2027-02-03, about 3.0 working days
+    WI-02 2027-02-04 to 2027-02-12, about 6.7 working days
+    WI-04 2027-02-15 to 2027-02-23, about 6.7 working days
+    WI-08 2027-02-24 to 2027-03-04, about 6.7 working days
+    WI-11 2027-03-05 to 2027-03-12, about 5.0 working days
+  It meets the target 2027-04-23 with 42 day(s) to spare. The planned dates add the slack between items.
+  Owners are not serialised in this pass. The load table above shows whether each person's work fits each work unit.
 
 Program-owned items (outside the development plan; referenced only as program input)
   WI-05 Pilot team recruitment
@@ -105,7 +118,7 @@ Checkpoints
 | [docs/spec/plan.yaml](docs/spec/plan.yaml) | The plan: five milestones, nine work items, two tracks, checkpoints. | A person and the agent |
 | [docs/spec/README.md](docs/spec/README.md) | Conventions, schedule, comment templates and the index. | `scaffold_spec.py` |
 | [docs/dev/skills/expense-approvals-dev](docs/dev/skills/expense-approvals-dev/SKILL.md) | The developer skill for this project. | `generate_dev_skill.py` |
-| [tools/carrydown](tools/carrydown/check_specs.py) | The checker, copied here so it can run in continuous integration. | `scaffold_spec.py --ci` |
+| [tools/carrydown](tools/carrydown/check_specs.py), [.github/workflows/check-specs.yml](.github/workflows/check-specs.yml) | The checker, copied here, and the workflow that runs it in continuous integration when a pull request or a push to main touches the specifications, the ground truth or the checker. | `scaffold_spec.py --ci` |
 
 The milestone files and one specification per work item:
 
