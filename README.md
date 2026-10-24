@@ -1,10 +1,10 @@
 # Expense approvals, a carrydown sample
 
-This is what [carrydown](https://github.com/sct-will/carrydown) made from one document. The ground truth is a short architecture document for a fictional expense approvals service, with its requirements, two governance rules, a development standard and a business analyst note, and the company, the people and the dates are invented. Everything else here is real output of the skills: the plan, one specification per work item, the engineers' skill, and on GitHub the issues and a public project board.
+This is what [carrydown](https://github.com/sct-will/carrydown) made from one document. The ground truth is a short architecture document for a fictional expense approvals service, with its requirements, two governance rules, a development standard and a business analyst note, and the company, the people and the dates are invented. Everything else here is real output of the skills: the plan, one specification per work item, the engineers' skill, and on GitHub the issues and a public project board. Two skills you install, one skill is generated for your engineers.
 
 Start with one work item. WI-03, the approval routing engine, is a GitHub issue whose AI engineering notes link to its specification, and that specification cites sections 3.4, 3.5 and 7.1 of the document. That chain, from issue to specification to paragraph, is what an engineer's coding agent reads before it changes code.
 
-[![Work item WI-03 as a GitHub issue, beside the specification file its AI engineering notes link to, which cites ground truth sections 3.4, 3.5 and 7.1.](docs/images/issue-and-spec.png)](https://github.com/sct-will/carrydown-sample/issues/9)
+[![Issue 9, WI-03 Approval routing engine, as GitHub renders it: open, parent Milestone 2, the target date and checkpoint, why the item exists, then the AI engineering notes with the specification link, the engineers' skill link and the ground truth sections 3.4, 3.5 and 7.1.](docs/images/issue-9.png)](https://github.com/sct-will/carrydown-sample/issues/9)
 
 **Look.** Open the [public board](https://github.com/users/sct-will/projects/2), click WI-03, then follow its specification link to the sections it cites. No account and no install.
 
@@ -12,22 +12,16 @@ Start with one work item. WI-03, the approval routing engine, is a GitHub issue 
 
 **Install.** Run `npx skills add sct-will/carrydown` in a project folder, put `ground-truth/architecture.md` from this repository in `docs/source/`, and tell your agent "Set up a project plan from this document." Compare your plan with this one. Nothing is written to GitHub until you say yes.
 
-## Renderings
+## The board
 
-These are renderings of the live sample output, drawn from this repository's plan and the issues as they are on GitHub, in the style used by the carrydown documentation. Every id, title, date and number in them is checked against the plan and the issues when they are built.
+[![The project board as a table grouped by work unit, with the Title, Track, Complete by and Checkpoint columns for each milestone and work item.](docs/images/board.png)](https://github.com/users/sct-will/projects/2)
 
-![The project board as a table grouped by work unit, with track, complete by, checkpoint and parent issue for each work item](docs/images/board-table.png)
-
-*The board as a table, grouped by work unit. The live board has the same fields; group it by Work unit to see this layout.*
-
-
-
-*Rendering of the sample output: one issue and the spec file the agent reads first.*
+*A capture of [the live board](https://github.com/users/sct-will/projects/2) shown as a table grouped by work unit. The saved Table view has the same fields; group it by Work unit to see this layout.*
 
 ## Live links
 
-- The issues the skills created: https://github.com/sct-will/carrydown-sample/issues. The Epic is issue 1, the five sub-epics are issues 2 to 6 and the nine work items are issues 7 to 15.
-- The public project board: https://github.com/users/sct-will/projects/2
+- [The issues the skills created](https://github.com/sct-will/carrydown-sample/issues). The Epic is issue 1, the five sub-epics are issues 2 to 6 and the nine work items are issues 7 to 15.
+- [The public project board](https://github.com/users/sct-will/projects/2)
 
 The Epic's roll-up comment on issue 1 opens with a Constraints block: the target delivery, and the people and their allocation by track. Every sub-epic carries a target delivery line. The issue bodies were rewritten from the specifications after the dates of WI-02 (2027-02-10), WI-03 (2027-02-19), WI-04 (2027-03-03), WI-06 (2027-03-08) and WI-08 (2027-03-17) moved, and the board carries the new dates.
 
@@ -202,7 +196,7 @@ python3 scripts/github_project.py --root ../carrydown-sample --repo YOUR-USER/YO
 
 ## Back to carrydown
 
-The skills and scripts are at https://github.com/sct-will/carrydown. The README there explains how to install them and how to use your own document.
+The skills and scripts are in [the carrydown repository](https://github.com/sct-will/carrydown). Its README explains how to install them and how to use your own document.
 
 ## Licence
 
