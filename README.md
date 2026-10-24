@@ -55,7 +55,7 @@ After the write, the verification step checked the counts through GitHub.
 
 ## Plan
 
-The checker's report on the plan: the schedule, the load table, the critical path, the target, the fit of each item in its window, the earliest finish, the program items, the checkpoints and the planning review. The checker found 15 files clean and 0 findings.
+The checker's report on the plan: the schedule, the load table, the critical path, the target, the fit of each item in its window, the earliest finish, the external items, the checkpoints and the planning review. The checker found 15 files clean and 0 findings.
 
 ```text
 Plan: Expense approvals
@@ -100,7 +100,7 @@ Earliest finish (forward pass over the dependencies, from sizes and allocation)
   It meets the target 2027-04-23 with 44 day(s) to spare. The planned dates add the slack between items.
   Owners are not serialised in this pass. The load table above shows whether each person's work fits each work unit.
 
-Program-owned items (outside the development plan; referenced only as program input)
+External items (outside the development plan; referenced only as external input)
   WI-05 Pilot team recruitment
   WI-10 Finance sign-off
 
@@ -178,7 +178,7 @@ The milestone files and one specification per work item:
 - [Milestone 5, Release](docs/spec/m5-release/milestone.md)
   - [WI-11 Release readiness and runbook](docs/spec/m5-release/wi-11-release-readiness.md)
 
-Ids 5 and 10 are missing on purpose. They belong to the program (pilot team recruitment, finance sign-off) and appear in the specifications only as a "program input".
+Ids 5 and 10 are missing on purpose. They are external items (pilot team recruitment, finance sign-off), owned outside the team, and appear in the specifications only as an "external input".
 
 ## Run it again
 
