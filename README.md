@@ -92,7 +92,7 @@ Earliest finish (forward pass over the dependencies, from sizes and allocation)
     WI-08 2027-02-22 to 2027-03-02, about 6.7 working days
     WI-11 2027-03-03 to 2027-03-10, about 5.0 working days
   It meets the target 2027-04-23 with 44 day(s) to spare. The planned dates add the slack between items.
-  Owners are not serialised in this pass. The load table above shows whether each person's work fits each work unit.
+  Owners are not serialized in this pass. The load table above shows whether each person's work fits each work unit.
 
 External items (outside the development plan; referenced only as external input)
   WI-05 Pilot team recruitment
@@ -198,6 +198,6 @@ python3 scripts/github_project.py --root ../carrydown-sample --repo YOUR-USER/YO
 
 The skills and scripts are in [the carrydown repository](https://github.com/sct-will/carrydown). Its README explains how to install them and how to use your own document.
 
-## Licence
+## License
 
 The scripts in `tools/` are licensed under the Apache License 2.0, see [LICENSE](LICENSE). The ground-truth document, the plan, the specifications, the engineers' skill and the images are licensed under Creative Commons Attribution 4.0 International, see [LICENSE-CONTENT.md](LICENSE-CONTENT.md).
