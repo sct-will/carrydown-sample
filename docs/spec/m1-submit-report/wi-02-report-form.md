@@ -1,6 +1,6 @@
 # WI-02 Report form and receipt upload
 
-| | |
+| Field | Value |
 | --- | --- |
 | Milestone | Milestone 1, Submit an expense report (`m1-submit-report`), work unit 1 |
 | Track | Experience |
@@ -134,7 +134,7 @@ Attach to the closing comment on the issue, in the template from the folder READ
 - The accessibility record. Automated check output, the keyboard path taken and the screen reader notes, in plain text.
 - Screenshots of the form with mixed currencies and of each error state, built from fixtures with no real names, amounts or receipts.
 
-The coding agent produces these from the commands above. The developer checks them before posting.
+The coding agent produces these from the commands above. The engineer checks them before posting.
 
 ## Integration points
 

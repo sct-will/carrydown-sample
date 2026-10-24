@@ -1,6 +1,6 @@
 # WI-11 Release readiness and runbook
 
-| | |
+| Field | Value |
 | --- | --- |
 | Milestone | Milestone 5, Release (`m5-release`), work unit 5 |
 | Track | Experience |
@@ -104,7 +104,7 @@ Attach to the closing comment on the issue, in the template from the folder READ
 - The rehearsal, restore and risk review tables, with identifiers only and no names, amounts or receipts.
 - A line stating whether the finance sign-off has arrived, as told by the stakeholders.
 
-The coding agent produces these from the commands above. The developer checks them before posting.
+The coding agent produces these from the commands above. The engineer checks them before posting.
 
 ## Integration points
 

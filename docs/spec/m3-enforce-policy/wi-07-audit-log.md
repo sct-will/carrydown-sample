@@ -1,6 +1,6 @@
 # WI-07 Audit log and retention
 
-| | |
+| Field | Value |
 | --- | --- |
 | Milestone | Milestone 3, Enforce policy (`m3-enforce-policy`), work unit 3 |
 | Track | Workflow |
@@ -100,7 +100,7 @@ Attach to the closing comment on the issue, in the template from the folder READ
 - The captured output of the failed update, with the database error text.
 - Redactions. Remove employee identifiers from pasted responses that are not fixtures.
 
-The coding agent produces these from the commands above. The developer checks them before posting.
+The coding agent produces these from the commands above. The engineer checks them before posting.
 
 ## Integration points
 
