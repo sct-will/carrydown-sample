@@ -23,6 +23,8 @@ These are renderings of the sample output, not screenshots. The item names in th
 - The issues the skills created: https://github.com/sct-will/carrydown-sample/issues. The Epic is issue 1, the five sub-epics are issues 2 to 6 and the nine work items are issues 7 to 15.
 - The public project board: https://github.com/users/sct-will/projects/2
 
+Current versions of the scripts add a Constraints block to the Epic's roll-up comment (the target delivery, and the people and their allocation by track) and a target delivery line to every sub-epic. The live Epic comment on issue 1 was written before that and has not been rewritten.
+
 ## The dry run
 
 Before anything was written to GitHub, the dry run printed this summary line.
