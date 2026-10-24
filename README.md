@@ -144,4 +144,4 @@ The skills and scripts are at https://github.com/sct-will/carrydown. The README 
 
 ## Licence
 
-The scripts in `tools/` are licensed under the Apache License 2.0, see [LICENSE](LICENSE). The ground-truth document, the plan, the specifications, the developer skill and the images are licensed under Creative Commons Attribution 4.0 International, see [LICENSE-CONTENT.md](LICENSE-CONTENT.md). Copyright 2026 Will Scott.
+The scripts in `tools/` are licensed under the Apache License 2.0, see [LICENSE](LICENSE). The ground-truth document, the plan, the specifications, the developer skill and the images are licensed under Creative Commons Attribution 4.0 International, see [LICENSE-CONTENT.md](LICENSE-CONTENT.md).
