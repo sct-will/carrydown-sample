@@ -1,6 +1,6 @@
 # Expense approvals, a carrydown sample
 
-This is what [carrydown](https://github.com/sct-will/carrydown) made from one document. The ground truth is a short architecture document for a fictional expense approvals service, with its requirements, two governance rules, a development standard and a business analyst note, and the company, the people and the dates are invented. Everything else here is real output of the skills: the plan, one specification per work item, the developer skill, and on GitHub the issues and a public project board.
+This is what [carrydown](https://github.com/sct-will/carrydown) made from one document. The ground truth is a short architecture document for a fictional expense approvals service, with its requirements, two governance rules, a development standard and a business analyst note, and the company, the people and the dates are invented. Everything else here is real output of the skills: the plan, one specification per work item, the engineers' skill, and on GitHub the issues and a public project board.
 
 Start with one work item. WI-03, the approval routing engine, is a GitHub issue whose AI engineering notes link to its specification, and that specification cites sections 3.4, 3.5 and 7.1 of the document. That chain, from issue to specification to paragraph, is what an engineer's coding agent reads before it changes code.
 
@@ -158,7 +158,7 @@ The sample is a two-person fictional team planned with slack on purpose, so its 
 | [docs/ground-truth/architecture.md](docs/ground-truth/architecture.md) | The rendering with a section index. | `render_ground_truth.py` |
 | [docs/spec/plan.yaml](docs/spec/plan.yaml) | The plan: five milestones, nine work items, two tracks, checkpoints. | A person and the agent |
 | [docs/spec/README.md](docs/spec/README.md) | Conventions, schedule, comment templates and the index. | `scaffold_spec.py` |
-| [docs/dev/skills/expense-approvals-dev](docs/dev/skills/expense-approvals-dev/SKILL.md) | The developer skill for this project. | `generate_dev_skill.py` |
+| [docs/dev/skills/expense-approvals-dev](docs/dev/skills/expense-approvals-dev/SKILL.md) | The engineers' skill for this project. | `generate_dev_skill.py` |
 | [tools/carrydown](tools/carrydown/check_specs.py), [.github/workflows/check-specs.yml](.github/workflows/check-specs.yml) | The checker, copied here, and the workflow that runs it in continuous integration when a pull request or a push to main touches the specifications, the ground truth or the checker. | `scaffold_spec.py --ci` |
 
 The milestone files and one specification per work item:
@@ -206,4 +206,4 @@ The skills and scripts are at https://github.com/sct-will/carrydown. The README 
 
 ## Licence
 
-The scripts in `tools/` are licensed under the Apache License 2.0, see [LICENSE](LICENSE). The ground-truth document, the plan, the specifications, the developer skill and the images are licensed under Creative Commons Attribution 4.0 International, see [LICENSE-CONTENT.md](LICENSE-CONTENT.md).
+The scripts in `tools/` are licensed under the Apache License 2.0, see [LICENSE](LICENSE). The ground-truth document, the plan, the specifications, the engineers' skill and the images are licensed under Creative Commons Attribution 4.0 International, see [LICENSE-CONTENT.md](LICENSE-CONTENT.md).
