@@ -4,17 +4,13 @@ This repository is a sample. It holds the ground-truth document for a fictional 
 
 ## Renderings
 
-These are renderings of the sample output, not screenshots. They were drawn from an earlier version of the sample, so the item names, tracks, dates and issue numbers in the pictures differ from the live sample.
+These are renderings of the live sample output, drawn from this repository's plan and the issues as they are on GitHub, in the style used by the carrydown documentation. Every id, title, date and number in them is checked against the plan and the issues when they are built.
 
-![A rendering of the project board as a table grouped by work unit](docs/images/board-table.png)
+![The project board as a table grouped by work unit, with track, complete by, checkpoint and parent issue for each work item](docs/images/board-table.png)
 
-*Rendering of the sample output: the board as a table, grouped by work unit.*
+*The board as a table, grouped by work unit. The live board has the same fields; group it by Work unit to see this layout.*
 
-![A rendering of the project board as a roadmap](docs/images/board-roadmap.png)
-
-*Rendering of the sample output: the roadmap, with work units of different lengths.*
-
-![A rendering of one issue next to the specification file it links to](docs/images/issue-and-spec.png)
+![Work item WI-03, issue 9, beside the specification file its AI engineering notes link to](docs/images/issue-and-spec.png)
 
 *Rendering of the sample output: one issue and the spec file the agent reads first.*
 
