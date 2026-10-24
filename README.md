@@ -23,7 +23,7 @@ These are renderings of the sample output, not screenshots. They were drawn from
 - The issues the skills created: https://github.com/sct-will/carrydown-sample/issues. The Epic is issue 1, the five sub-epics are issues 2 to 6 and the nine work items are issues 7 to 15.
 - The public project board: https://github.com/users/sct-will/projects/2
 
-Current versions of the scripts add a Constraints block to the Epic's roll-up comment (the target delivery, and the people and their allocation by track) and a target delivery line to every sub-epic. The live Epic comment on issue 1 was written before that and has not been rewritten.
+The Epic's roll-up comment on issue 1 opens with a Constraints block: the target delivery, and the people and their allocation by track. Every sub-epic carries a target delivery line. The issue bodies were rewritten from the specifications after the dates of WI-01, WI-02, WI-04, WI-06 and WI-08 moved, and the board carries the new dates.
 
 ## The dry run
 
