@@ -45,7 +45,7 @@ After the write, the verification step checked the counts through GitHub.
 | Board items | 15 |
 | Board fields filled | Work unit on 14, Track on 9, Complete by on 14, Checkpoint on 14 |
 | Board views | Table, Board, Roadmap |
-| Work unit iterations | 5, with the pause week left as a break |
+| Work unit iterations | 5, with the offsite week left as a break |
 
 ## Plan
 
@@ -148,7 +148,7 @@ The sample is a two-person fictional team planned with slack on purpose, so its 
 | Path | What it is | Made by |
 | --- | --- | --- |
 | [ground-truth/architecture.md](ground-truth/architecture.md) | The source document: context, requirements, architecture, two governance rules, a development standard, a business analyst note, interfaces and risks. | A person |
-| [people.yaml](people.yaml), [timeline.yaml](timeline.yaml) | Two people with tracks and percent allocation (one at 100, one at 60), an advisor, a target date of 2027-04-23 and a pause week. | The interview |
+| [people.yaml](people.yaml), [timeline.yaml](timeline.yaml) | Two people with tracks and percent allocation (one at 100, one at 60), an advisor, a target date of 2027-04-23 and a break week. | The interview |
 | [docs/ground-truth/architecture.md](docs/ground-truth/architecture.md) | The rendering with a section index. | `render_ground_truth.py` |
 | [docs/spec/plan.yaml](docs/spec/plan.yaml) | The plan: five milestones, nine work items, two tracks, checkpoints. | A person and the agent |
 | [docs/spec/README.md](docs/spec/README.md) | Conventions, schedule, comment templates and the index. | `scaffold_spec.py` |
