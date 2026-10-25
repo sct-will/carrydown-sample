@@ -198,4 +198,4 @@ The skills and scripts are in [the carrydown repository](https://github.com/sct-
 
 ## License
 
-The scripts in `tools/` are licensed under the Apache License 2.0, see [LICENSE](LICENSE). The ground-truth document, the plan, the specifications, the engineers' skill and the images are licensed under Creative Commons Attribution 4.0 International, see [LICENSE-CONTENT.md](LICENSE-CONTENT.md).
+Everything in this repository is licensed under the Apache License 2.0, see [LICENSE](LICENSE).
