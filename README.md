@@ -8,7 +8,7 @@ Start with one work item. [WI-03](https://github.com/sct-will/carrydown-sample/i
 
 **Look.** Open the [public board](https://github.com/users/sct-will/projects/2), click WI-03, then follow its specification link to the sections it cites. No account and no install.
 
-**Install.** Run `npx skills add sct-will/carrydown` in a project folder, put `ground-truth/architecture.md` from this repository in `docs/source/`, and tell your agent "Set up a project plan from this document." Compare your plan with this one. Nothing is written to GitHub until you say yes.
+**Install.** Run `npx skills add sct-will/carrydown` in a project folder, give your agent the path to `ground-truth/architecture.md` from this repository, and tell it "Set up a project plan from this document." Compare your plan with this one. Nothing is written to GitHub until you say yes.
 
 ## The board
 
@@ -47,10 +47,22 @@ After the write, the verification step checked the counts through GitHub.
 
 ## Plan
 
-The checker's report on the plan: the schedule, the load table, the critical path, the target, the fit of each item in its window, the earliest finish, the external items, the checkpoints and the planning review. The checker found 15 files clean and 0 findings.
+The checker's report on the plan, with the sample's fictional `people.yaml` loaded: the sources, the staffing context, the schedule, the load table, the critical path, the target, the fit of each item in its window, the earliest finish, the external items, the checkpoints and the planning review. The checker found 15 files clean and 0 findings.
 
 ```text
 Plan: Expense approvals
+
+Sources (highest precedence first)
+  1. Architecture document: reviewed; not rendered -> not rendered
+
+Staffing context (advisory)
+  Track workflow needs: Service APIs, Workflow rules, Relational data
+  Track experience needs: Accessible web interfaces, Client integration, Notifications
+  tamsin on workflow: skills Python services, PostgreSQL, Workflow design; preferences Service contracts, Policy enforcement
+    Assignment rationale: The workflow track best matches the supplied service, data and workflow skills and the preference for policy work.
+  idris on experience: skills TypeScript, Accessible web interfaces, Notification flows; preferences User-facing workflows, Integration demonstrations
+    Assignment rationale: The experience track best matches the supplied interface and notification skills and the preference for user-facing work.
+  Skills and preferences guide the agent's proposed match. They do not make the checker pass or fail; uncertain matches use the default assignment rules.
 
 Schedule
   Work unit 1, Submit an expense report: 2027-02-01 to 2027-02-12 (demonstration 2027-02-12)
@@ -65,6 +77,8 @@ Load (sized days of work against allocated capacity, per person and work unit)
   Person  Alloc  WU1             WU2             WU3             WU4             WU5            Total          
   tamsin  100%   3 of 10d (30%)  5 of 14d (36%)  6 of 10d (60%)  4 of 10d (40%)  0 of 10d       18 of 54d (33%)
   idris   60%    3 of 6d (50%)   4 of 9d (44%)   4 of 5d (74%)   0 of 6d         3 of 6d (50%)  14 of 32d (43%)
+  tamsin, 100 percent allocated: work unit 1, 3 of 10 days (30 percent); work unit 2, 5 of 14 days (36 percent); work unit 3, 6 of 10 days (60 percent); work unit 4, 4 of 10 days (40 percent); work unit 5, 0 of 10 days; total 18 of 54 days (33 percent).
+  idris, 60 percent allocated: work unit 1, 3 of 6 days (50 percent); work unit 2, 4 of 9 days (44 percent); work unit 3, 4 of 5 days (74 percent); work unit 4, 0 of 6 days; work unit 5, 3 of 6 days (50 percent); total 14 of 32 days (43 percent).
   No person is over 100 percent of allocated capacity in any work unit.
 
 Critical path (longest dependency chain to the last item)
@@ -151,7 +165,9 @@ The sample is a two-person fictional team planned with slack on purpose, so its 
 | [docs/spec/plan.yaml](docs/spec/plan.yaml) | The plan: five milestones, nine work items, two tracks, checkpoints. | A person and the agent |
 | [docs/spec/README.md](docs/spec/README.md) | Conventions, schedule, comment templates and the index. | `scaffold_spec.py` |
 | [docs/dev/skills/expense-approvals-dev](docs/dev/skills/expense-approvals-dev/SKILL.md) | The engineers' skill for this project. | `generate_dev_skill.py` |
-| [tools/carrydown](tools/carrydown/check_specs.py), [.github/workflows/check-specs.yml](.github/workflows/check-specs.yml) | The checker, copied here, and the workflow that runs it in continuous integration when a pull request or a push to main touches the specifications, the ground truth or the checker. | `scaffold_spec.py --ci` |
+| [docs/context](docs/context/wi-03.md) | The approved context of each work item: the source excerpts its specification cites, with a bundle file the engineers' check reads. | `release.py release` |
+| [docs/release](docs/release/) | The receipt of the approved release: the audience, the destinations and the digest of every published file. | `release.py release` |
+| [tools/carrydown](tools/carrydown/check_specs.py), [.github/workflows/check-specs.yml](.github/workflows/check-specs.yml), [.github/pull_request_template.md](.github/pull_request_template.md) | The checker, copied here, the workflow that runs it in continuous integration and the pull request template. The full check runs when a pull request or a push to main touches the specifications, the ground truth, the approved contexts, the release receipts or the checker. The declaration check reads the description of every pull request. | `scaffold_spec.py --ci` |
 
 The milestone files and one specification per work item:
 
@@ -180,17 +196,14 @@ Clone both repositories side by side. These three commands need no token and no 
 git clone https://github.com/sct-will/carrydown.git
 git clone https://github.com/sct-will/carrydown-sample.git
 cd carrydown
-python3 scripts/check_specs.py --root ../carrydown-sample --report
+python3 scripts/check_specs.py --root ../carrydown-sample --report --people ../carrydown-sample/people.yaml
 python3 scripts/github_sync.py --root ../carrydown-sample --offline
 python3 scripts/github_project.py --root ../carrydown-sample --offline
 ```
 
-To see the dry runs against GitHub, store a token with `python3 scripts/github_token.py` and name a throwaway repository of your own. Both commands are dry runs until you add `--apply`.
+The first command loads the fictional `people.yaml` for the capacity, dates and names checks. Without `--people` the report says `people overlay not loaded` and leaves those checks out. The sample includes invented staffing data so you can reproduce its reports. Real staffing records stay in the plan owner's private workspace.
 
-```bash
-python3 scripts/github_sync.py --root ../carrydown-sample --repo YOUR-USER/YOUR-TEST-REPO
-python3 scripts/github_project.py --root ../carrydown-sample --repo YOUR-USER/YOUR-TEST-REPO
-```
+The sample publishes only an approved release. Without `--offline`, `github_sync.py` and `github_project.py` need the owner's private workspace, which a clone does not have, so they stop with `workspace-unavailable`. The plan owner guide in the carrydown repository explains [the release](https://github.com/sct-will/carrydown/blob/main/docs/plan-owner-guide.md#release-what-the-engineers-will-see) and [the GitHub step](https://github.com/sct-will/carrydown/blob/main/docs/plan-owner-guide.md#the-github-step). Every command that writes to GitHub is a dry run until you add `--apply`.
 
 ## Back to carrydown
 

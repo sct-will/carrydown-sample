@@ -9,9 +9,12 @@ Contents
 This module is imported by the other scripts. It is not run on its own.
 """
 import datetime as _dt
+import errno
 import json
 import os
 import re
+import stat as _stat
+import string
 import sys
 from pathlib import Path
 
@@ -114,9 +117,11 @@ def _scalar(s):
         return True
     if low == "false":
         return False
-    if re.fullmatch(r"-?\d+", s):
+    # ASCII digits only. A run of more than 30 digits stays text: no id, count or percent is that
+    # long, and int() of thousands of digits is refused by Python. The validator reports it.
+    if re.fullmatch(r"-?[0-9]{1,30}", s):
         return int(s)
-    if re.fullmatch(r"-?\d+\.\d+", s):
+    if re.fullmatch(r"-?[0-9]{1,30}\.[0-9]{1,30}", s):
         return float(s)
     return s
 
@@ -155,6 +160,8 @@ def _flow(s):
         pos[0] += 1
         out = []
         ws()
+        if pos[0] >= len(s):
+            raise YamlError(f"unterminated list, a [ with no ]: {s}")
         if s[pos[0]] == "]":
             pos[0] += 1
             return out
@@ -175,6 +182,8 @@ def _flow(s):
         pos[0] += 1
         out = {}
         ws()
+        if pos[0] >= len(s):
+            raise YamlError(f"unterminated map, a {{ with no }}: {s}")
         if s[pos[0]] == "}":
             pos[0] += 1
             return out
@@ -331,16 +340,69 @@ class _Reader:
 
 def loads(text):
     r = _Reader(text)
-    v = r.block(0)
+    try:
+        v = r.block(0)
+    except YamlError as e:
+        # a value on one line, such as a flow list cut short, is reported with the line it is on:
+        # the reader has just moved past that line, so r.i is its line number
+        if str(e).startswith("line "):
+            raise
+        raise YamlError(f"line {max(r.i, 1)}: {e}")
+    except RecursionError:
+        raise YamlError(f"line {max(r.i, 1)}: lists or maps nested too deeply")
     r.skip_blank()
     if r.i < len(r.raw):
         raise YamlError(f"line {r.i + 1}: unexpected content")
     return v
 
 
+class TextError(SystemExit):
+    """A file that cannot be read as UTF-8 text. It is a SystemExit, so a script that does not
+    catch it stops with its one-line message and no traceback. str(e) is the message."""
+
+    def __init__(self, msg):
+        super().__init__(f"error: {msg}")
+        self.msg = msg
+
+    def __str__(self):
+        return self.msg
+
+
+def regular_file_problem(path):
+    """Why path cannot be read as a file, or None when it is a regular file. A folder, a named
+    pipe or a device such as /dev/zero is refused before it is opened: reading a pipe waits for
+    a writer, and reading /dev/zero never ends. A path that does not exist returns None, so the
+    caller reports it in its own words."""
+    try:
+        mode = os.stat(str(path)).st_mode
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        return f"cannot read {path}: {getattr(e, 'strerror', None) or e}"
+    if _stat.S_ISDIR(mode):
+        return f"{path} is a folder, not a file"
+    if not _stat.S_ISREG(mode):
+        return f"{path} is not a regular file (it is a named pipe, a socket or a device). Name a text file"
+    return None
+
+
 def read_text(path):
-    """Read a text file as UTF-8, with or without a byte order mark (Notepad and PowerShell write one)."""
-    return Path(path).read_text(encoding="utf-8-sig")
+    """Read a text file as UTF-8, with or without a byte order mark (Notepad and PowerShell write one).
+    A file that is not UTF-8, or a path that is a folder, a pipe or a device, raises TextError with
+    a one-line message."""
+    p = Path(path)
+    why = regular_file_problem(p)
+    if why:
+        raise TextError(why)
+    try:
+        return p.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise TextError(f"{p} is not UTF-8 text (byte 0x{e.object[e.start]:02x} at offset {e.start}). "
+                        "Save it as UTF-8, then run this again")
+    except IsADirectoryError:
+        raise TextError(f"{p} is a folder, not a file")
+    except OSError as e:
+        raise TextError(f"cannot read {p}: {e.strerror or e}")
 
 
 def load_file(path):
@@ -360,8 +422,159 @@ def inside(root, path, what="output"):
     target = Path(path)
     target = (target if target.is_absolute() else base / target).resolve()
     if target != base and base not in target.parents:
-        die(f"the {what} path {path} is outside the project folder {base}, so nothing was written")
+        hint = (". A relative --out-dir is read from the project root (--root). Give a folder inside it, such as my-test/ground-truth"
+                if what == "--out-dir" else "")
+        die(f"the {what} path {path} is outside the project folder {base}, so nothing was written{hint}")
     return target
+
+
+def write_lf(path, text):
+    """Write text as UTF-8 with LF line endings on every platform. Path.write_text uses the
+    platform's line ending, CRLF on Windows, and only takes newline= from Python 3.10."""
+    with open(str(path), "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
+def write_text(path, text):
+    """Write a UTF-8 text file with LF line endings, creating its folder. A path that cannot be
+    written stops the script with a one-line message instead of a traceback."""
+    path = Path(path)
+    try:
+        if path.exists() and not path.is_file():
+            # opening a named pipe for writing waits for a reader, so it is refused, as is a folder
+            die(f"cannot write {path}: it is {'a folder' if path.is_dir() else 'not a regular file'}. Move it out of the way, then run this again")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_lf(path, text)
+    except OSError as e:
+        die(f"cannot write {path}: {e.strerror or e}. Check that the folder exists and that you may write to it")
+
+
+def root_problem(value):
+    """Why value cannot be the project folder, or None. Shared by every script's --root."""
+    if not str(value).strip():
+        return "--root is empty. Pass the project folder, for example --root ."
+    try:
+        root = Path(value).expanduser().resolve()
+        if root.is_dir():
+            return None
+        return f"--root {value} is not a folder" + ("" if root.exists() else ", it does not exist") + ". Pass the project folder"
+    except (OSError, ValueError, RuntimeError) as e:
+        return f"--root {value} cannot be used: {getattr(e, 'strerror', None) or e}. Pass the project folder"
+
+
+def project_root(value):
+    """The --root folder, resolved. A path that does not exist or is not a folder stops the script."""
+    why = root_problem(value)
+    if why:
+        die(why)
+    return Path(value).expanduser().resolve()
+
+
+def exists(path):
+    """Path.exists() that answers False instead of raising, for a name too long for the file
+    system or a path the user may not search. Python 3.9 raises on both."""
+    try:
+        return Path(path).exists()
+    except (OSError, ValueError):
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Release helpers: thin wrappers over release_schema.py, which holds the real code so the
+# independent verifier can carry it unchanged. release_schema is imported when a wrapper runs, so
+# a copy of this file that sits without it (the checker copy in a project) still loads.
+# ---------------------------------------------------------------------------
+
+def _schema():
+    try:
+        import release_schema as module
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import release_schema as module
+    return module
+
+
+def normalize_section_text(text):
+    """A source section as the compiler and the verifier compare it: CRLF to LF, trailing blanks
+    removed from each line, exactly one trailing newline."""
+    return _schema().normalize_section_text(text)
+
+
+def sha256_text(text):
+    """The lowercase hex SHA-256 of text, encoded as UTF-8."""
+    return _schema().sha256_text(text)
+
+
+def sha256_file(path):
+    """The lowercase hex SHA-256 of a regular file. A folder, a pipe, a device or a file that
+    cannot be read stops with a one-line TextError message."""
+    why = regular_file_problem(path)
+    if why:
+        raise TextError(why)
+    try:
+        return _schema().sha256_file(path)
+    except FileNotFoundError:
+        raise TextError(f"{path} does not exist")
+    except OSError as e:
+        raise TextError(f"cannot read {path}: {e.strerror or e}")
+
+
+def canonical_json(value):
+    """Canonical JSON bytes: sorted keys, no insignificant whitespace, UTF-8, one trailing LF.
+    Duplicate keys in bytes input, non-finite numbers and unknown values raise SchemaError."""
+    return _schema().canonical_json(value)
+
+
+def _repository_top(root):
+    """The folder of the engineering repository that holds root: the nearest folder at or above
+    root with a .git entry, or root itself when there is none."""
+    base = Path(os.path.realpath(str(root)))
+    for folder in [base] + list(base.parents):
+        if (folder / ".git").exists():
+            return folder
+    return base
+
+
+def path_inside_repository(root, candidate):
+    """True when candidate lies inside the project folder root or inside the engineering repository
+    that holds root. Symbolic links are resolved first, so a link cannot hide the location."""
+    base = Path(root).expanduser().resolve()
+    target = Path(os.path.realpath(str(candidate)))
+    for repo in {base, _repository_top(base)}:
+        if target == repo or repo in target.parents:
+            return True
+    return False
+
+
+def workspace_root(root):
+    """The owner's private workspace for the project at root, as (path, None), or (None, reason).
+
+    The path is the `workspace:` line of .carrydown/local.yaml under root. That file is untracked
+    and read only by scripts the owner runs, never from plan.yaml or any tracked file. The reason is
+    a fixed code: workspace-unavailable when the file, the line or the folder is missing or unusable,
+    and workspace-inside-repository when the path resolves inside the engineering repository."""
+    if root_problem(root):
+        return None, "workspace-unavailable"
+    base = Path(root).expanduser().resolve()
+    pointer = base / ".carrydown" / "local.yaml"
+    if regular_file_problem(pointer) or not pointer.exists():
+        return None, "workspace-unavailable"
+    try:
+        data = load_file(pointer)
+    except (YamlError, TextError):
+        return None, "workspace-unavailable"
+    value = data.get("workspace") if isinstance(data, dict) else None
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        return None, "workspace-unavailable"
+    try:
+        candidate = Path(os.path.realpath(str((base / Path(value.strip()).expanduser()))))
+    except (OSError, ValueError, RuntimeError):
+        return None, "workspace-unavailable"
+    if path_inside_repository(base, candidate):
+        return None, "workspace-inside-repository"
+    if root_problem(candidate):
+        return None, "workspace-unavailable"
+    return candidate, None
 
 
 def slugify(text):
@@ -376,10 +589,14 @@ def slugify(text):
 # ---------------------------------------------------------------------------
 
 def parse_date(s):
+    """A YYYY-MM-DD date from 1900 to 2999. A year outside that range is a typing error, and date
+    arithmetic near the year 9999 would overflow."""
     if isinstance(s, _dt.date):
         return s
-    if not isinstance(s, str) or not re.fullmatch(r"\d{4}-\d\d-\d\d", s.strip()):
+    if not isinstance(s, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", s.strip()):
         raise ValueError(f"not a date (use YYYY-MM-DD): {s!r}")
+    if not 1900 <= int(s.strip()[:4]) <= 2999:
+        raise ValueError(f"not a date from 1900 to 2999: {s!r}")
     return _dt.date.fromisoformat(s.strip())
 
 
@@ -389,6 +606,15 @@ def fmt_date(d):
 
 def tag(plan, n):
     return f"{plan['project']['id_prefix']}-{int(n):02d}"
+
+
+def item_number(plan, text):
+    """The item number in an id written 3, 03, WI-03, wi-3 or WI03, or None. ASCII digits only,
+    so a negative number or a full-width digit is not an id."""
+    prefix = str(plan["project"].get("id_prefix") or "")
+    pat = (r"\s*(?:" + re.escape(prefix) + r"-?)?0*([0-9]+)\s*") if prefix else r"\s*0*([0-9]+)\s*"
+    m = re.fullmatch(pat, str(text), re.I)
+    return int(m.group(1)) if m else None
 
 
 def item_by_id(plan):
@@ -426,16 +652,60 @@ PLAN_NAMES = ("plan.yaml", "docs/spec/plan.yaml")
 
 
 def find_plan(root, explicit=None):
+    """The plan path: --plan when given, else docs/spec/plan.yaml or plan.yaml under root. An
+    empty --plan raises PlanError, so it never falls back to the default plan."""
+    if explicit is not None and not str(explicit).strip():
+        raise PlanError("--plan is empty. Leave it out to use docs/spec/plan.yaml, or give the path of the plan")
     if explicit:
         p = Path(explicit)
         if not p.is_absolute():
-            p = Path(root) / p if not p.exists() else p
+            p = Path(root) / p if not exists(p) else p
         return p
     for cand in ("docs/spec/plan.yaml", "plan.yaml"):
         p = Path(root) / cand
-        if p.exists():
+        if exists(p):
             return p
     return Path(root) / "docs/spec/plan.yaml"
+
+
+def owner_plan(root, explicit=None):
+    """The plan the owner works on: --plan when given, else the working plan in the private workspace when
+    the project holds only its released copy, else find_plan.
+
+    After the first release on the "yes" path, docs/spec/plan.yaml in the project is the released plan,
+    exactly as approved, and the owner's working plan (with its comments, source paths, classifications and
+    digests) is <workspace>/drafts/plan.yaml, while the specifications stay in the project. The owner-side
+    commands (the checker, the scaffold, the skill generator) then read the working plan, as the release
+    commands, the renderer and the gate already do. A clean clone has no workspace pointer and reads the
+    released plan. On the "no" path the drafts folder also holds the specifications, and the commands are
+    run with --root <workspace>/drafts, so nothing changes there."""
+    if explicit is not None:
+        return find_plan(root, explicit)
+    project_plan = find_plan(root, None)
+    try:
+        ws, _why = workspace_root(root)
+    except Exception:
+        ws = None
+    if ws is None:
+        return project_plan
+    drafts = Path(ws) / "drafts" / "plan.yaml"
+    if not exists(drafts):
+        return project_plan
+    try:
+        raw = load_file(drafts)
+        spec_dir = str(((raw.get("project") or {}).get("spec_dir")) or "docs/spec") if isinstance(raw, dict) else "docs/spec"
+    except (YamlError, TextError, OSError, ValueError):
+        return project_plan
+    if (Path(ws) / "drafts" / spec_dir).is_dir():
+        return project_plan
+    if exists(project_plan):
+        try:
+            mine = load_file(project_plan)
+        except (YamlError, TextError, OSError, ValueError):
+            return project_plan
+        if not (isinstance(mine, dict) and mine.get("plan_view") == "released"):
+            return project_plan
+    return drafts
 
 
 RATIONALE_MILESTONE_KEYS = ("rationale", "joint_demonstration", "single_track_reason")
@@ -451,46 +721,337 @@ def _text(value):
     return value
 
 
-def load_plan(path):
-    """Read plan.yaml and fill defaults. Returns (plan, problems)."""
+class PlanError(SystemExit):
+    """plan.yaml cannot be read, or a value in it has the wrong type, so no script can use it.
+    It is a SystemExit, so a script that does not catch it stops with its message and no
+    traceback. e.msg is the message without the "error: " prefix."""
+
+    def __init__(self, msg):
+        super().__init__(f"error: {msg}")
+        self.msg = msg
+
+    def __str__(self):
+        return self.msg
+
+
+def _kind(v):
+    return {dict: "a mapping", list: "a list", bool: "true or false", type(None): "empty"}.get(type(v), "text" if isinstance(v, str) else "a number")
+
+
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+# The plan layouts. A plan written before the confidential ground truth work has no plan_format and
+# no project.handling block: it is legacy and keeps its old rules. A plan with plan_format 2 is
+# validated in one of two views. The workspace view is the owner's working plan. The released view
+# is the exported plan that the engineering repository holds and the independent verifier checks.
+PLAN_FORMAT = 2
+PLAN_VIEWS = ("workspace", "released")
+CLASSIFICATIONS = ("repo-readers", "restricted", "public")
+RETAIN_VALUES = ("keep", "delete-after-release")
+HANDLING_STATES = ("legacy", "migrated")
+ENGINEER_EDITS = ("allowed", "request-only")
+# project.clarification: where an engineer's Rule clarification request goes. The owner approves the login or
+# the issue number for publication; the block is optional. channel mention needs login, channel issue needs issue.
+CLARIFICATION_KEYS = ("channel", "login", "issue")
+CLARIFICATION_CHANNELS = ("mention", "issue")
+HANDLING_KEYS = ("policy_version", "repo_audience_approved", "approvers", "retain_raw_inputs", "state",
+                 "downstream", "offline_grace_days", "engineer_edits")
+RELEASED_HANDLING_KEYS = ("policy_version", "repo_audience_approved", "state", "offline_grace_days", "engineer_edits")
+DOWNSTREAM_FLAGS = ("assignees", "capacity_summary", "evidence")
+# Personal facts. They live in people.yaml in the private workspace and never in a plan.yaml of a
+# migrated project (E1 of the specification). Schema locations are reported as people:<id>:<field>.
+STAFFING_KEYS = ("name", "github", "skills", "preferences", "assignment_rationale", "days_off", "allocation", "start")
+PRIVATE_SOURCE_KEYS = ("path", "source_path", "classification", "content_sha256", "rendering_sha256")
+_LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\Z")
+_HEX64_RE = re.compile(r"[0-9a-f]{64}\Z")
+
+
+class PlanViewError(ValueError):
+    """A plan was given to a function that needs another view, or a merged staffing view was given
+    where only the stored plan may go. The fixed reason code is schema-view-mismatch."""
+
+    code = "schema-view-mismatch"
+
+
+def is_modern(plan):
+    """True for a plan in the plan_format 2 layout: it declares plan_format or plan_view, or its
+    project.handling block says state: migrated. Everything else is a legacy plan."""
+    if not isinstance(plan, dict):
+        return False
+    if plan.get("plan_format") is not None or plan.get("plan_view") is not None:
+        return True
+    proj = plan.get("project")
+    handling = proj.get("handling") if isinstance(proj, dict) else None
+    return isinstance(handling, dict) and handling.get("state") == "migrated"
+
+
+def plan_mode(plan, view=None):
+    """legacy, workspace or released: the rules validate_plan applies. view is the view the caller
+    requires (None to accept the one the plan declares). A legacy plan is checked by the legacy
+    rules unless a view is required."""
+    if view is not None and view not in PLAN_VIEWS:
+        raise ValueError(f"unknown plan view {view!r}. Use one of: {', '.join(PLAN_VIEWS)}")
+    if view is not None:
+        return view
+    if not is_modern(plan):
+        return "legacy"
+    declared = plan.get("plan_view")
+    return declared if declared in PLAN_VIEWS else "workspace"
+
+
+def staffing_loaded(plan):
+    """True when the people facts that capacity, dates and names checks need are in the plan: a
+    legacy plan holds them itself, and a migrated plan holds them only after people.yaml is merged."""
+    return not plan.get("_modern") or plan.get("_people_overlay") is not None
+
+
+# Fields read as text, per list of the plan. A number given for one of them is taken as text,
+# so `label: 2027` works. None means the field is empty and is treated as left out.
+_TEXT_FIELDS = {
+    "tracks": ("id", "label", "color"),
+    "people": ("id", "name", "github", "track", "start", "assignment_rationale"),
+    "advisors": ("id", "name", "github", "note"),
+    "milestones": ("name", "folder", "start", "end", "demo", "gate"),
+    "breaks": ("name", "start", "end"),
+    "checkpoints": ("date", "name", "joint_check"),
+    "items": ("slug", "label", "track", "owner", "complete_by", "size", "checkpoint", "ground_truth", "external_input", "program_input",
+              "restricted_summary", "restricted_placeholder", "restricted_evidence"),
+    "external.items": ("label", "note"),
+    "sources": ("id", "name", "source_path", "path", "use", "version", "status", "limit", "classification",
+                "content_sha256", "rendering_sha256"),
+}
+_TEXT_LIST_FIELDS = {
+    "tracks": ("skill_needs",),
+    "people": ("skills", "preferences"),
+    "items": ("skill_needs",),
+}
+_INT_FIELDS = {"milestones": ("number",), "items": ("id", "milestone"), "external.items": ("id",)}
+_PROJECT_TEXT = ("name", "slug", "id_prefix", "repo", "branch", "epic_title", "subepic_prefix", "title_format",
+                 "spec_dir", "ground_truth", "project_title", "dev_skill", "dev_skill_path")
+
+
+def _as_text(row, key, where, P, person=False):
+    """Keep a text field as text: a number becomes text, empty means left out, anything else is a problem.
+    person=True names the person and the key and says nothing else: a record of a person is never echoed."""
+    if key not in row:
+        return
+    v = row[key]
+    if v is None:
+        del row[key]
+    elif isinstance(v, (int, float)) and not isinstance(v, bool):
+        row[key] = str(v)
+    elif not isinstance(v, str):
+        if person:
+            P.append(f"{where}: {key} has the wrong type")
+        else:
+            P.append(f"{where}.{key} must be text, got {_kind(v)}. Write it on one line, in quotes if it holds a colon and a space")
+
+
+def type_problems(plan):
+    """Problems with the shape of plan.yaml: a list where a mapping belongs, a mapping where text
+    belongs, an id that is not a whole number. Any of them stops every script, because the plan
+    cannot be read as a plan. Returns a list of one-line problems. Fixes harmless shapes in place:
+    numbers in text fields become text, and empty values count as left out."""
+    P = []
+    for key, want in (("project", dict), ("conventions", dict), ("external", dict), ("program", dict), ("limits", dict),
+                      ("banned", dict), ("tracks", list), ("people", list), ("advisors", list), ("milestones", list),
+                      ("breaks", list), ("checkpoints", list), ("items", list), ("sources", list)):
+        if plan.get(key) is not None and not isinstance(plan[key], want):
+            P.append(f"{key} must be {'a mapping of keys' if want is dict else 'a list of entries starting with -'}, got {_kind(plan[key])}")
+    reserved = sorted(k for k in plan if isinstance(k, str) and k.startswith("_"))
+    if reserved:
+        P.append(f"plan keys that start with an underscore are reserved for the scripts: {', '.join(reserved[:5])}")
+    if P:
+        return P
+    modern = is_modern(plan)   # a migrated plan's staffing keys are reported by validate_plan, so they are left as written
+    proj = plan.get("project") or {}
+    for k in _PROJECT_TEXT:
+        _as_text(proj, k, "project", P)
+    handling = proj.get("handling")
+    if handling is not None and not isinstance(handling, dict):
+        P.append(f"project.handling must be a mapping of keys, got {_kind(handling)}")
+    elif isinstance(handling, dict) and handling.get("downstream") is not None and not isinstance(handling["downstream"], dict):
+        P.append(f"project.handling.downstream must be a mapping of keys, got {_kind(handling['downstream'])}")
+    if proj.get("clarification") is not None and not isinstance(proj["clarification"], dict):
+        P.append(f"project.clarification must be a mapping of keys, got {_kind(proj['clarification'])}")
+    ep = proj.get("epic")
+    if ep is not None and not _is_int(ep) and not (isinstance(ep, str) and re.fullmatch(r"[0-9]{1,18}", ep.strip())):
+        P.append(f"project.epic must be an issue number or null, got {ep!r}")
+    elif isinstance(ep, str):
+        proj["epic"] = int(ep.strip())   # the number goes into API paths, so it is kept as ASCII digits only
+    if _is_int(proj.get("epic")) and proj["epic"] < 0:
+        P.append(f"project.epic must be an issue number or null, got {proj['epic']!r}")
+    rows = dict((k, plan.get(k) or []) for k in ("tracks", "people", "advisors", "milestones", "breaks", "checkpoints", "items", "sources"))
+    ext = plan.get("external") if plan.get("external") is not None else plan.get("program")
+    if isinstance(ext, dict):
+        if ext.get("items") is not None and not isinstance(ext["items"], list):
+            P.append(f"external.items must be a list of entries starting with -, got {_kind(ext['items'])}")
+        else:
+            rows["external.items"] = ext.get("items") or []
+    for group, lst in rows.items():
+        for n, row in enumerate(lst, 1):
+            if not isinstance(row, dict):
+                P.append(f"{group}: entry {n} must be a mapping such as `- id: ...`, got {_kind(row)}")   # the entry itself is never echoed
+                continue
+            where = f"{group} entry {n}"
+            kept = modern and group in ("people", "advisors")   # reported by key, never converted or echoed
+            is_person = group in ("people", "advisors")
+            if is_person:   # a person is named by id, or by position when the id is missing or not text
+                who = row.get("id") if isinstance(row.get("id"), str) and row.get("id") else f"#{n}"
+                where = f"{'person' if group == 'people' else 'advisor'} {who}"
+            for k in _TEXT_FIELDS.get(group, ()):
+                if kept and (group == "advisors" or k in STAFFING_KEYS):
+                    continue
+                _as_text(row, k, where, P, person=is_person)
+            for k in _TEXT_LIST_FIELDS.get(group, ()):
+                if kept:
+                    continue
+                v = row.get(k)
+                if v is None:
+                    continue
+                if isinstance(v, str):
+                    row[k] = [v] if v.strip() else []
+                elif not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                    if is_person:
+                        P.append(f"{where}: {k} has the wrong type")
+                    else:
+                        P.append(f"{where}.{k} must be text or a list of text, got {_kind(v)}")
+            for k in _INT_FIELDS.get(group, ()):
+                if row.get(k) is not None and not _is_int(row[k]):
+                    P.append(f"{where}.{k} must be a whole number, got {row[k]!r}")
+            for k in ("depends", "unblocks") if group == "items" else ():
+                v = row.get(k)
+                if v is None:
+                    continue
+                if not isinstance(v, list) or not all(_is_int(d) for d in v):
+                    P.append(f"{where}.{k} must be a list of item ids, such as [1, 3], got {v!r}")
+            if group == "people" and not kept and row.get("days_off") is not None:
+                v = row["days_off"]
+                if not isinstance(v, list) or not all(isinstance(d, (str, int)) and not isinstance(d, bool) for d in v):
+                    P.append(f"{where}: days_off has the wrong type")
+            if group == "items" and row.get("source_refs") is not None:
+                refs = row["source_refs"]
+                if not isinstance(refs, list):
+                    P.append(f"{where}.source_refs must be a list of source and sections entries")
+                else:
+                    for rnum, ref in enumerate(refs, 1):
+                        rwhere = f"{where}.source_refs entry {rnum}"
+                        if not isinstance(ref, dict):
+                            P.append(f"{rwhere} must be a mapping such as `- source: architecture`, got {_kind(ref)}")
+                            continue
+                        _as_text(ref, "source", rwhere, P)
+                        _as_text(ref, "sections", rwhere, P)
+    conv = plan.get("conventions") or {}
+    for k in ("test_command", "lint_command", "feature_flag"):
+        _as_text(conv, k, "conventions", P)
+    if conv.get("extra") is not None and (not isinstance(conv["extra"], list) or not all(isinstance(x, str) for x in conv["extra"])):
+        P.append("conventions.extra must be a list of text lines")
+    lim = plan.get("limits") or {}
+    sl = lim.get("spec_lines")
+    if sl is not None and not (isinstance(sl, list) and len(sl) == 2 and all(_is_int(x) and x >= 0 for x in sl) and sl[0] <= sl[1]):
+        P.append(f"limits.spec_lines must be two whole numbers, low then high, such as [80, 340], got {sl!r}")
+    b = plan.get("banned") or {}
+    for k in ("words", "phrases", "vendors", "names"):
+        v = b.get(k)
+        if v is None:
+            continue
+        if not isinstance(v, list) or not all(isinstance(x, (str, int)) and not isinstance(x, bool) for x in v):
+            P.append(f"banned.{k} must be a list of text, got {_kind(v)}")
+            continue
+        if k != "names":
+            for pat in v:
+                try:
+                    re.compile(str(pat))
+                except re.error as e:
+                    P.append(f"banned.{k}: {str(pat)!r} is not a valid pattern ({e})")
+    for k in ("dashes", "skip_code_blocks"):
+        if k in b and not isinstance(b[k], bool):
+            P.append(f"banned.{k} must be true or false, got {b[k]!r}")
+    tg = plan.get("target")
+    if isinstance(tg, dict):
+        _as_text(tg, "date", "target", P)
+    return P
+
+
+def load_plan(path, root=None, view=None):
+    """Read plan.yaml and fill defaults. Returns (plan, problems).
+
+    A plan that cannot be read, or whose values have the wrong shape, raises PlanError: no script
+    can work from it. Other problems are returned, so the checker can list them all. root is the
+    project folder the paths in the plan are relative to; it is used to check their length.
+
+    view is the layout the caller requires: workspace, released, or None to accept the one the plan
+    declares (a plan with no plan_format is legacy). The stored plan is validated in that view. The
+    returned plan holds no staffing facts when it is migrated: it names people by id only. Use
+    load_plan_with_people for the owner-side calculations that need names, allocation and days off."""
     path = Path(path)
     try:
         raw = load_file(path)
-    except (OSError, ValueError) as e:   # YamlError, UnicodeDecodeError and JSON errors are ValueErrors
-        raise SystemExit(f"cannot read plan {path}: {e}")
+    except TextError as e:
+        msg = "it" + e.msg[len(str(path)):] if e.msg.startswith(str(path) + " ") else e.msg
+        raise PlanError(f"cannot read plan {path}: {msg}")
+    except (OSError, ValueError, RecursionError) as e:   # YamlError and JSON errors are ValueErrors
+        raise PlanError(f"cannot read plan {path}: {e}")
     if not isinstance(raw, dict):
-        raise SystemExit(f"plan {path} must be a mapping at the top level")
+        raise PlanError(f"plan {path} must be a mapping at the top level, such as `project:` followed by its keys")
+    return plan_from_data(raw, path, root, view)
+
+
+def plan_from_data(raw, path="plan.yaml", root=None, view=None):
+    """The part of load_plan that follows reading the file: check the shape, fill the defaults and
+    validate in the view. raw is changed in place, so pass a copy to keep the original. Returns
+    (plan, problems). Used on a projected plan before it is written, so the same rules apply."""
+    shape = type_problems(raw)
+    if shape:
+        shown = "; ".join(shape[:3]) + (f"; and {len(shape) - 3} more" if len(shape) > 3 else "")
+        raise PlanError(f"plan {path} cannot be used: {shown}")
     plan = raw
-    proj = plan.setdefault("project", {}) or {}
+    modern = is_modern(plan)
+    mode = plan_mode(plan, view)
+    proj = plan.get("project") or {}
     plan["project"] = proj
     proj.setdefault("branch", "main")
     proj.setdefault("spec_dir", "docs/spec")
     proj.setdefault("subepic_prefix", "Milestone")
     proj.setdefault("title_format", "{id} {label}")
     proj.setdefault("epic", None)
-    proj.setdefault("ground_truth", "docs/ground-truth/architecture.md")
+    if mode != "released":
+        proj.setdefault("ground_truth", "docs/ground-truth/architecture.md")   # a released plan invents no path
     proj.setdefault("project_title", f"{proj.get('name', 'Plan')} plan")
     proj.setdefault("epic_title", f"{proj.get('name', 'Plan')}, development plan")
-    for k in ("people", "advisors", "tracks", "milestones", "breaks", "checkpoints", "items"):
+    # A migrated plan has no advisors list. A key that is there is reported by validate_plan.
+    for k in ("people", "tracks", "milestones", "breaks", "checkpoints", "items") + (() if modern else ("advisors",)):
         if plan.get(k) is None:
             plan[k] = []
     for person in plan["people"]:
+        if modern:
+            continue   # no staffing defaults: allocation, skills and the rest come from people.yaml
         if person.get("allocation") is None:
             person["allocation"] = 100
+        person["skills"] = list(person.get("skills") or [])
+        person["preferences"] = list(person.get("preferences") or [])
+        person["assignment_rationale"] = _text(person.get("assignment_rationale"))
     plan["target"] = plan.get("target") or None
     plan["conventions"] = plan.get("conventions") or {}
     plan["limits"] = plan.get("limits") or {}
-    plan["limits"].setdefault("spec_lines", [80, 340])
+    if plan["limits"].get("spec_lines") is None:
+        plan["limits"]["spec_lines"] = [80, 340]
     if "external" not in plan and "program" in plan:   # plans written before the rename keep working
         plan["external"] = plan.pop("program")
     plan["external"] = plan.get("external") or {}
-    plan["external"].setdefault("items", [])
+    plan["external"]["items"] = plan["external"].get("items") or []
     plan["banned"] = plan.get("banned") or {}
     b = plan["banned"]
-    b.setdefault("words", list(DEFAULT_BANNED_WORDS))
-    b.setdefault("phrases", list(DEFAULT_BANNED_PHRASES))
-    b["vendors"] = list(DEFAULT_BANNED_VENDORS) + [v for v in (b.get("vendors") or []) if v]
-    b.setdefault("names", [])
+    if b.get("words") is None:
+        b["words"] = list(DEFAULT_BANNED_WORDS)
+    if b.get("phrases") is None:
+        b["phrases"] = list(DEFAULT_BANNED_PHRASES)
+    b["words"] = [str(w) for w in b["words"] if w not in (None, "")]
+    b["phrases"] = [str(w) for w in b["phrases"] if w not in (None, "")]
+    b["vendors"] = list(DEFAULT_BANNED_VENDORS) + [str(v) for v in (b.get("vendors") or []) if v]
+    b["names"] = b.get("names") or []
     b.setdefault("dashes", True)
     for it in plan["items"]:
         it.setdefault("depends", [])
@@ -501,8 +1062,10 @@ def load_plan(path):
         it["external_input"] = it.get("external_input") or ""
         it.setdefault("size", "")
         it.setdefault("ground_truth", "")
+        it["source_refs"] = it.get("source_refs") or []
         it.setdefault("owner", "")
         it["theme"] = _text(it.get("theme"))
+        it["skill_needs"] = list(it.get("skill_needs") or [])
     # the planning rationale: why each milestone holds its items, what the joint demonstration
     # shows, and why each track's items are in their order. Text, folded to one line.
     for m in plan["milestones"]:
@@ -512,24 +1075,43 @@ def load_plan(path):
     for t in plan["tracks"]:
         if isinstance(t, dict):
             t["order_rationale"] = _text(t.get("order_rationale"))
+            t["skill_needs"] = list(t.get("skill_needs") or [])
     # derived unblocks: inverse of depends
     derived = {it["id"]: [] for it in plan["items"] if isinstance(it.get("id"), int)}
     for it in plan["items"]:
         for d in it["depends"]:
-            if d in derived:
+            if d in derived and _is_int(it.get("id")):   # an item without an integer id is reported by validate_plan
                 derived[d].append(it["id"])
     for it in plan["items"]:
-        it["_derived_unblocks"] = sorted(derived.get(it["id"], []))
+        it["_derived_unblocks"] = sorted(derived.get(it.get("id"), []))
         if not it["unblocks"]:
             it["unblocks"] = it["_derived_unblocks"]
-    # banned names come only from the plan: the people and advisors in it, and banned.names.
-    # Full names match in any case. A single part of a name ("Will", "Long") matches only as a
-    # capitalized word, and handles and ids only as written, so the words "will" and "long" in
-    # ordinary prose are not findings. A capitalized name part at the start of a sentence still is.
-    names = [str(n) for n in b["names"] if n]
+    _banned_names(plan)
+    plan["_path"] = str(path)
+    plan["_root"] = str(root) if root is not None else None
+    plan["_modern"] = modern
+    plan["_view"] = mode
+    plan["_people_overlay"] = None   # set by load_plan_with_people on the merged copy only
+    problems = validate_plan(plan, view)
+    if root is not None and not modern and (Path(root) / ".carrydown" / "release-policy.yaml").is_file():
+        # An enrolled repository can never be legacy: deleting project.handling cannot downgrade it.
+        problems.append("project.handling is missing, but this repository has .carrydown/release-policy.yaml "
+                        "(enrolled-project-missing-handling). Restore the handling block")
+    return plan, problems
+
+
+def _banned_names(plan):
+    """Fill plan["_banned_names"] and plan["_banned_exact"], the names the specifications must not hold.
+
+    They come only from the plan: banned.names, and the people and advisors in it. Full names match in
+    any case. A single part of a name ("Will", "Long") matches only as a capitalized word, and handles
+    and ids only as written, so the words "will" and "long" in ordinary prose are not findings. A
+    capitalized name part at the start of a sentence still is. A migrated plan holds ids only, so
+    before people.yaml is merged the check is built from the ids and says so (staffing_loaded)."""
+    names = [str(n) for n in plan["banned"]["names"] if n]
     exact = []
-    for p in list(plan["people"]) + list(plan["advisors"]):
-        if p.get("derived"):
+    for p in list(plan.get("people") or []) + list(plan.get("advisors") or []):
+        if not isinstance(p, dict) or p.get("derived"):
             continue   # placeholder people such as "Engineer 1" are not real names
         parts = []
         if p.get("name"):
@@ -542,8 +1124,450 @@ def load_plan(path):
                 exact.append(str(handle))
     plan["_banned_names"] = sorted(set(n for n in names if n))
     plan["_banned_exact"] = sorted(set(exact))
-    plan["_path"] = str(path)
-    return plan, validate_plan(plan)
+
+
+# ---------------------------------------------------------------------------
+# Staffing: people.yaml in the private workspace, merged for the owner's calculations only
+# ---------------------------------------------------------------------------
+
+def _yaml_error_text(error):
+    """A YAML error as the line it names and nothing else: the reader's own messages quote the text
+    of the line, and in people.yaml that text is a personal fact."""
+    m = re.match(r"line (\d+):", str(error))
+    return f"syntax error near line {m.group(1)}" if m else "syntax error"
+
+
+def people_file_problem(path):
+    """Why path cannot be the people file, or None. The message holds no content of the file."""
+    why = regular_file_problem(path)
+    if why:
+        return why
+    if not exists(path):
+        return f"people file {path} does not exist"
+    return None
+
+
+def load_people_file(path):
+    """Read people.yaml. Returns (doc, problems): doc is {"people": [...], "advisors": [...]} with
+    the text fields as text and the lists as lists. A file that cannot be read raises PlanError with
+    a message that quotes none of its text. Problems name a person by id and a field by key, and
+    never print a value."""
+    why = people_file_problem(path)
+    if why:
+        raise PlanError(why)
+    try:
+        raw = load_file(path)
+    except TextError as e:
+        raise PlanError(f"cannot read people file {path}: {e.msg[len(str(path)) + 1:] if e.msg.startswith(str(path) + ' ') else 'it is not UTF-8 text'}")
+    except YamlError as e:
+        raise PlanError(f"cannot read people file {path}: {_yaml_error_text(e)}")
+    except (OSError, ValueError, RecursionError):
+        raise PlanError(f"cannot read people file {path}")
+    P = []
+    if not isinstance(raw, dict):
+        raise PlanError(f"people file {path} must be a mapping at the top level, such as `people:` followed by its entries")
+    for k in raw:
+        if k not in ("people", "advisors"):
+            P.append(f"people.yaml: unknown key {str(k)[:40]!r}. Use people and advisors")
+    out = {"people": [], "advisors": []}
+    for group in ("people", "advisors"):
+        rows = raw.get(group)
+        if rows is None:
+            continue
+        if not isinstance(rows, list):
+            P.append(f"people.yaml: {group} must be a list of entries starting with -")
+            continue
+        for n, row in enumerate(rows, 1):
+            if not isinstance(row, dict):
+                P.append(f"people.yaml: {group} entry {n} must be a mapping such as `- id: ...`")
+                continue
+            who = row.get("id") if isinstance(row.get("id"), str) and row.get("id") else f"#{n}"
+            clean = {}
+            for k, v in row.items():
+                if v is None:
+                    continue
+                if k in ("id", "name", "github", "track", "assignment_rationale", "start", "role", "note"):
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        v = str(v)
+                    if not isinstance(v, str):
+                        P.append(f"people.yaml {'person' if group == 'people' else 'advisor'} {who}: {k} has the wrong type")
+                        continue
+                elif k in ("skills", "preferences"):
+                    if isinstance(v, str):
+                        v = [v] if v.strip() else []
+                    elif not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                        P.append(f"people.yaml person {who}: {k} has the wrong type")
+                        continue
+                elif k == "days_off":
+                    if not isinstance(v, list) or not all(isinstance(x, (str, int)) and not isinstance(x, bool) for x in v):
+                        P.append(f"people.yaml person {who}: days_off has the wrong type")
+                        continue
+                    v = [str(x) for x in v]
+                # allocation stays as written: staffing_problems checks it
+                clean[k] = v
+            if group == "people" and not clean.get("id"):
+                P.append(f"people.yaml: people entry {n} has no id. Each person needs the id used in plan.yaml")
+            out[group].append(clean)
+    return out, P
+
+
+def resolve_people_path(root, people_path=None):
+    """Where the staffing overlay is, as (path, reason). An explicit people_path is used as given. Without
+    one the file is people.yaml in the private workspace of the project at root. There is no other
+    place to look, and never a tracked file of the project: reason is then workspace-unavailable or
+    workspace-inside-repository, and path is None."""
+    if people_path is not None:
+        if not str(people_path).strip():
+            raise PlanError("--people is empty. Give the path of people.yaml, or leave it out to use the private workspace")
+        return Path(people_path).expanduser(), None
+    if root is None:
+        return None, "workspace-unavailable"
+    ws, why = workspace_root(root)
+    if ws is None:
+        return None, why
+    candidate = ws / "people.yaml"
+    if candidate.is_file():
+        return candidate, None
+    return None, "workspace-unavailable"
+
+
+def merge_people(plan, people_path):
+    """Merge people.yaml into a copy of a stored plan, by person id. Returns (merged, problems).
+
+    The merged copy is the calculation view: names, allocation, start dates, days off, skills and the
+    rest, for capacity, dates and names checks on the owner's machine. The stored plan is not
+    changed. The copy is marked with _staffing_merged, and project_released_plan refuses it, so it
+    can never be projected or dumped into a release. merged["_people_overlay"] is the path of the file."""
+    import copy
+    doc, problems = load_people_file(people_path)
+    merged = copy.deepcopy(plan)
+    by_id = {}
+    for entry in doc["people"]:
+        pid = entry.get("id")
+        if pid in by_id:
+            problems.append(f"people.yaml: person {pid} appears more than once")
+        by_id[pid] = entry
+    plan_ids = {p.get("id") for p in merged["people"]}
+    for pid in by_id:
+        if pid and pid not in plan_ids:
+            problems.append(f"people.yaml: person {pid} is not a person in plan.yaml")
+    tracks = {t.get("id"): t for t in merged["tracks"]}
+    for p in merged["people"]:
+        entry = by_id.get(p.get("id"))
+        if entry is None:
+            if not p.get("derived"):
+                problems.append(f"people.yaml has no entry for person {p.get('id')}")
+        else:
+            for k in STAFFING_KEYS:
+                if k in entry:
+                    p[k] = entry[k]
+            track = entry.get("track")
+            wanted = tracks.get(p.get("track")) or {}
+            if track and str(track).casefold() not in {str(p.get("track")).casefold(), str(wanted.get("label") or "").casefold()}:
+                problems.append(f"people.yaml: the track of person {p.get('id')} does not match plan.yaml")
+        if p.get("allocation") is None:
+            p["allocation"] = 100
+        p["skills"] = list(p.get("skills") or [])
+        p["preferences"] = list(p.get("preferences") or [])
+        p["assignment_rationale"] = _text(p.get("assignment_rationale"))
+    merged["advisors"] = doc["advisors"]
+    merged["_people_overlay"] = str(people_path)
+    merged["_staffing_merged"] = True
+    _banned_names(merged)
+    problems += staffing_problems(merged, show_values=False)
+    return merged, problems
+
+
+def load_plan_with_people(path, root=None, people_path=None, view=None):
+    """load_plan, then the staffing overlay merged in for the owner's calculations. Returns
+    (plan, problems). The stored plan is validated first, in its view. When there is no overlay, or
+    the plan is a legacy plan that holds its own staffing, the stored plan comes back unmerged:
+    check plan["_people_overlay"] and staffing_loaded(plan) to know whether capacity, dates and
+    names can be checked. The overlay is people_path when given, else people.yaml in the private
+    workspace of the project at root. A tracked people.yaml is never a fallback."""
+    plan, problems = load_plan(path, root, view)
+    if not plan["_modern"] and people_path is None:
+        return plan, problems
+    found, _ = resolve_people_path(root, people_path)
+    if found is None:
+        return plan, problems
+    merged, more = merge_people(plan, found)
+    return merged, problems + more
+
+
+def downstream_flags(plan):
+    """What may flow downstream from this plan, as {"assignees": bool, "capacity_summary": bool}.
+
+    They are read from project.handling.downstream until the release request carries them (the
+    release work package moves them there). A legacy plan keeps today's behavior: both are true. A
+    migrated plan defaults to false for both, so a number of people or a login reaches GitHub only
+    when the owner said so."""
+    handling = (plan.get("project") or {}).get("handling")
+    down = handling.get("downstream") if isinstance(handling, dict) else None
+    legacy = not plan.get("_modern", is_modern(plan))
+    out = {}
+    for k in ("assignees", "capacity_summary"):
+        v = down.get(k) if isinstance(down, dict) else None
+        out[k] = v if isinstance(v, bool) else legacy
+    return out
+
+
+def assignee_login(plan, item):
+    """The GitHub login of the owner of item, or "". It is read from the plan's own people only: a
+    legacy plan holds the login, and a migrated plan never does, so the GitHub scripts resolve no
+    login for it. Logins for a migrated project are approved values in the release payloads, which
+    the release work package builds from people.yaml."""
+    if not item:
+        return ""
+    for p in plan.get("people") or []:
+        if p.get("id") == item.get("owner"):
+            return str(p.get("github") or "")
+    return ""
+
+
+def payload_assignees(staffed_plan, item):
+    """Logins that may go into an issue payload for item: [] unless the plan's downstream.assignees is
+    true and the staffing overlay is merged. The release work package calls this at prepare."""
+    if not staffed_plan.get("_people_overlay") and staffed_plan.get("_modern"):
+        return []
+    if not downstream_flags(staffed_plan)["assignees"]:
+        return []
+    login = assignee_login(staffed_plan, item)
+    return [login] if login else []
+
+
+# ---------------------------------------------------------------------------
+# The released plan: an allowlist projection of the workspace plan
+# ---------------------------------------------------------------------------
+
+RELEASED_PROJECT_KEYS = ("name", "slug", "id_prefix", "repo", "branch", "epic", "epic_title", "subepic_prefix",
+                         "title_format", "spec_dir", "project_title", "dev_skill", "dev_skill_path", "clarification")
+RELEASED_SOURCE_KEYS = ("id", "name", "version")
+RELEASED_PERSON_KEYS = ("id", "track", "derived")
+RELEASED_ITEM_KEYS = ("id", "slug", "label", "milestone", "track", "owner", "theme", "complete_by", "size", "depends",
+                      "unblocks", "checkpoint", "external_input", "source_refs", "skill_needs", "state", "ground_truth")
+
+
+def restricted_item(item):
+    """True for a work item the owner marked restricted. It is left out of the released plan."""
+    return isinstance(item, dict) and item.get("restricted") is True
+
+
+RESTRICTED_SUMMARY_MAX = 200
+RESTRICTED_PLACEHOLDER_MAX = 600
+RESTRICTED_TEXT_KEYS = (("restricted_summary", RESTRICTED_SUMMARY_MAX), ("restricted_placeholder", RESTRICTED_PLACEHOLDER_MAX),
+                        ("restricted_evidence", RESTRICTED_PLACEHOLDER_MAX))
+
+
+def restricted_summary(item):
+    """The owner's one-line summary of a restricted item, whitespace folded. It is the only text of the
+    item that reaches the released plan, the specifications, the payloads and the engineers' skill."""
+    return " ".join(str(item.get("restricted_summary") or "").split())
+
+
+def restricted_evidence(item):
+    """The owner's note that a restricted item is done, or "". It lives in the workspace plan only. Until the
+    owner writes it the item stays open in the owner's plan; nothing is ever posted to GitHub for it."""
+    return " ".join(str(item.get("restricted_evidence") or "").split()) if restricted_item(item) else ""
+
+
+def restricted_placeholder(item):
+    """The owner's approved instruction for a restricted item that has a published placeholder, or "".
+    A placeholder is the only way an engineer is told that private work exists (check_context.py,
+    fourth message). It is published only because the owner wrote it and the approver approved it."""
+    return " ".join(str(item.get("restricted_placeholder") or "").split()) if restricted_item(item) else ""
+
+
+def withhold(items, external, restricted):
+    """Take the restricted items out of a plan's lists. This is the one place that decides what a
+    restricted item leaves behind (specification WP9, item 1).
+
+    items       the work items that stay, as copies the caller owns. They are changed in place.
+    external    the plan's external items, as a list the caller owns. Returned extended.
+    restricted  the restricted work items of the workspace plan.
+
+    For each stay-behind item that depends on a restricted item, the dependency is removed and the
+    owner's restricted_summary is added to the item's external_input (after any text it had). Each
+    restricted item that something depended on, or that has a published placeholder, becomes one
+    external item: its id and, as its label, the summary. No other text of a restricted item is used,
+    and an unblocks entry that names one is removed. Returns (items, external items sorted by id)."""
+    gone = {r["id"]: r for r in restricted if isinstance(r.get("id"), int)}
+    shown = []
+    for it in items:
+        dropped = [d for d in it.get("depends") or [] if d in gone]
+        if dropped:
+            it["depends"] = [d for d in it["depends"] if d not in gone]
+            texts = [str(it.get("external_input") or "").strip()] + [restricted_summary(gone[d]) for d in dropped]
+            it["external_input"] = "; ".join(dict.fromkeys(t for t in texts if t))
+            shown += [d for d in dropped if d not in shown]
+        if it.get("unblocks"):
+            it["unblocks"] = [u for u in it["unblocks"] if u not in gone]
+    shown += [rid for rid in sorted(gone) if restricted_placeholder(gone[rid]) and rid not in shown]
+    out = list(external) + [{"id": rid, "label": restricted_summary(gone[rid])} for rid in sorted(shown)]
+    return items, sorted(out, key=lambda row: (row.get("id") if isinstance(row.get("id"), int) else 0))
+
+
+def withheld_view(plan):
+    """A copy of a loaded workspace plan with its restricted items taken out (withhold), in the shape the
+    generators read: the specification stubs, the README and milestone tables, the engineers' skill and
+    the GitHub payloads are built from this view, so a restricted item cannot reach them. The input is
+    not changed. Underscore keys of the loaded plan are kept, and the derived unblocks are recomputed."""
+    import copy
+    restricted = [it for it in plan.get("items") or [] if restricted_item(it)]
+    out = copy.deepcopy({k: v for k, v in plan.items() if k != "items"})
+    live = [copy.deepcopy(it) for it in plan.get("items") or [] if not restricted_item(it)]
+    out["external"] = dict(out.get("external") or {})
+    live, out["external"]["items"] = withhold(live, out["external"].get("items") or [], restricted)
+    gone = {r.get("id") for r in restricted}
+    derived = {it["id"]: [] for it in live if isinstance(it.get("id"), int)}
+    for it in live:
+        for d in it.get("depends") or []:
+            if d in derived and isinstance(it.get("id"), int):
+                derived[d].append(it["id"])
+    for it in live:
+        it["_derived_unblocks"] = sorted(derived.get(it.get("id"), []))
+        if it.get("unblocks") is not None:
+            it["unblocks"] = [u for u in it["unblocks"] if u not in gone]
+    out["items"] = live
+    return out
+
+
+def _restricted_hook(workspace_plan, projected, omitted):
+    """Replace the restricted items of the projected plan by what the owner approved to leave behind
+    (withhold): an external item with the owner's summary for each omitted item that another item
+    depends on or that has a published placeholder. omitted holds the ids of the items left out."""
+    if omitted:
+        restricted = [it for it in workspace_plan.get("items") or [] if restricted_item(it)]
+        ext = projected.setdefault("external", {"items": []})
+        projected["items"], ext["items"] = withhold(projected["items"], ext.get("items") or [], restricted)
+    return projected
+
+
+def _released_item(plan, item, omitted=()):
+    """One work item of the released plan. A citation written as text (the older ground_truth line) is
+    resolved here, against the workspace plan's sources, into structured source_refs, because the
+    released plan is checked against the approved bundle of each item and has no source paths to read.
+    The owner's text stays beside them, so the Ground truth row of the exported specification, which
+    shows that text, still matches the released plan (ground_truth_citation). An item that has its own
+    source_refs keeps only those, because its Ground truth row was written from them."""
+    import copy
+    out = {k: copy.deepcopy(item[k]) for k in RELEASED_ITEM_KEYS if k in item}
+    if out.get("unblocks"):
+        out["unblocks"] = [u for u in out["unblocks"] if u not in omitted]   # no trace of an omitted item
+    refs = item_source_refs(plan, item)
+    if item.get("source_refs"):
+        if out.get("ground_truth"):
+            out["ground_truth"] = ""           # its row shows the source_refs, never this text
+    elif refs:
+        out["source_refs"] = copy.deepcopy(refs)
+    return out
+
+
+def project_released_plan(workspace_plan):
+    """The released plan for a validated workspace plan: a new object built from an allowlist.
+
+    Only the keys named in the RELEASED_ tuples, and the milestones, tracks, checkpoints and the
+    like, are copied (deeply), so a key added to the workspace plan later is private until someone
+    adds it here. People are reduced to id, track and derived; there is no advisors list; sources
+    to id, name and version; the handling block to the answer to the one question and the policy
+    version; banned.names is left out. Items marked restricted are omitted (restricted_item).
+
+    The input is not changed. The staffing-merged view (load_plan_with_people) is refused: it holds
+    personal facts and must never be serialized for a release. Validate the result with
+    released_plan_problems before writing it into a snapshot."""
+    import copy
+    plan = workspace_plan
+    if plan.get("_staffing_merged") or plan.get("_people_overlay"):
+        raise PlanViewError("the staffing-merged plan cannot be projected. Project the stored workspace plan (schema-view-mismatch)")
+    if not is_modern(plan):
+        raise PlanViewError("only a migrated workspace plan can be projected. Run step 0 of the ground-truth skill first (schema-view-mismatch)")
+    declared = plan.get("_view") or plan.get("plan_view")
+    if declared != "workspace":
+        raise PlanViewError("only a workspace plan can be projected (schema-view-mismatch)")
+    proj = plan["project"]
+    out_project = {k: copy.deepcopy(proj[k]) for k in RELEASED_PROJECT_KEYS if k in proj}
+    handling = proj.get("handling") or {}
+    out_project["handling"] = {k: copy.deepcopy(handling[k]) for k in RELEASED_HANDLING_KEYS if k in handling}
+    banned = plan.get("banned") or {}
+    out_banned = {}
+    if banned.get("words") is not None and list(banned["words"]) != DEFAULT_BANNED_WORDS:
+        out_banned["words"] = list(banned["words"])
+    if banned.get("phrases") is not None and list(banned["phrases"]) != DEFAULT_BANNED_PHRASES:
+        out_banned["phrases"] = list(banned["phrases"])
+    custom = [v for v in (banned.get("vendors") or []) if v not in DEFAULT_BANNED_VENDORS]
+    if custom:
+        out_banned["vendors"] = custom
+    for k in ("dashes", "skip_code_blocks"):
+        if k in banned:
+            out_banned[k] = banned[k]
+    omitted = [it.get("id") for it in plan.get("items") or [] if restricted_item(it)]
+    out = {
+        "plan_format": PLAN_FORMAT,
+        "plan_view": "released",
+        "project": out_project,
+        "sources": [{k: copy.deepcopy(s[k]) for k in RELEASED_SOURCE_KEYS if k in s} for s in plan.get("sources") or []],
+        "conventions": copy.deepcopy(plan.get("conventions") or {}),
+        "tracks": copy.deepcopy(plan.get("tracks") or []),
+        "people": [{k: copy.deepcopy(p[k]) for k in RELEASED_PERSON_KEYS if k in p} for p in plan.get("people") or []],
+        "milestones": copy.deepcopy(plan.get("milestones") or []),
+        "breaks": copy.deepcopy(plan.get("breaks") or []),
+        "checkpoints": copy.deepcopy(plan.get("checkpoints") or []),
+        "items": [_released_item(plan, it, omitted) for it in plan.get("items") or [] if not restricted_item(it)],
+        "external": copy.deepcopy(plan.get("external") or {"items": []}),
+        "limits": copy.deepcopy(plan.get("limits") or {}),
+    }
+    if plan.get("target"):
+        out["target"] = copy.deepcopy(plan["target"])
+    if out_banned:
+        out["banned"] = out_banned
+    return _restricted_hook(plan, out, omitted)
+
+
+def released_plan_problems(projected):
+    """Problems with a projected plan, checked in the released view as the verifier checks it. The
+    projection is copied first. Returns a list of one-line messages, empty when it is valid."""
+    import copy
+    _, problems = plan_from_data(copy.deepcopy(projected), "released plan", None, "released")
+    return problems
+
+
+def released_plan_bytes(workspace_plan):
+    """The bytes of the released plan file for a validated workspace plan: project_released_plan, checked
+    in the released view, written by the plan dumper with one trailing newline. A release stores these
+    bytes as the snapshot's plan.yaml, and the release gate compares a working plan with them. Raises
+    PlanViewError when the projection is not a valid released plan."""
+    import plan_repair   # lazily: the dumper is shipped with every skill that writes a plan
+    projected = project_released_plan(workspace_plan)
+    problems = released_plan_problems(projected)
+    if problems:
+        raise PlanViewError("the released plan is not valid: " + "; ".join(problems[:3]))
+    return (plan_repair.dump(projected) + "\n").encode("utf-8")
+
+
+MAX_WEEKS = 520          # ten years of working weeks: a larger target is a typing error
+MAX_SIZE_DAYS = 260       # a year of working days for one item
+
+
+def repo_ok(repo):
+    """True for owner/name with GitHub's characters, and neither part "." or ".."."""
+    m = re.fullmatch(r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", str(repo))
+    return bool(m) and not {m.group(1), m.group(2)} & {".", ".."}
+
+
+def relative_inside(path):
+    """True when path is relative and does not climb out of the folder it is relative to."""
+    s = str(path).replace("\\", "/")
+    if s.startswith("/") or re.match(r"^[A-Za-z]:", s) or s.startswith("~"):
+        return False
+    depth = 0
+    for part in s.split("/"):
+        if part == "..":
+            depth -= 1
+            if depth < 0:
+                return False
+        elif part not in ("", "."):
+            depth += 1
+    return True
 
 
 def _is_date(s):
@@ -558,45 +1582,444 @@ def _is_weekend(s):
     return parse_date(s).weekday() >= 5
 
 
-def validate_plan(plan):
+TITLE_FIELDS = ("id", "label", "lower")   # the fields item_title in github_sync.py supplies
+MAX_TITLE = 256       # GitHub refuses a longer issue title
+MAX_LABEL = 50        # GitHub refuses a longer label name
+SLUG_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+ID_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(-[A-Za-z0-9_]+)*")
+
+
+def format_title(fmt, tag_text, label):
+    """An issue title from project.title_format. Only {id}, {label} and {lower} are filled in,
+    and only after title_format_problem found nothing wrong with fmt."""
+    return fmt.format(id=tag_text, label=label, lower=tag_text.lower())
+
+
+def title_format_problem(fmt):
+    """Why project.title_format cannot make issue titles, or None. It may hold the fields {id},
+    {label} and {lower}, with no conversion and no format spec, and literal braces doubled. It
+    must hold {id} or {lower}, so no two work items get the same title."""
+    if not isinstance(fmt, str):
+        return None   # reported by type_problems
+    head = f"project.title_format {fmt!r}"
+    try:
+        parts = list(string.Formatter().parse(fmt))
+    except ValueError as e:
+        return f"{head} is not a valid title format ({e}). Use {{id}}, {{label}} and {{lower}}, and write a literal brace as {{{{ or }}}}"
+    fields = []
+    for _, name, spec, conv in parts:
+        if name is None:
+            continue
+        if name not in TITLE_FIELDS or spec or conv:
+            shown = "{" + name + ("!" + conv if conv else "") + (":" + spec if spec else "") + "}"
+            return f"{head} uses {shown}. Only {{id}}, {{label}} and {{lower}} can be used, as written, and a literal brace is written {{{{ or }}}}"
+        fields.append(name)
+    if not {"id", "lower"} & set(fields):
+        return f"{head} must hold {{id}} or {{lower}}, so that every work item issue gets its own title"
+    return None
+
+
+def _one_line(value):
+    """True when a text value has no line break and no other control character."""
+    return not isinstance(value, str) or not any(ord(c) < 32 or c == "\x7f" for c in value)
+
+
+def _limits():
+    """(longest name, longest path) in bytes that the file system takes."""
+    if os.name == "nt":
+        return 255, 260
+    try:
+        return os.pathconf("/", "PC_NAME_MAX"), os.pathconf("/", "PC_PATH_MAX")
+    except (AttributeError, ValueError, OSError):
+        return 255, 1024
+
+
+def path_problems(plan):
+    """Plan values that make a file or folder name, or a whole path, longer than the file system
+    allows. A script would otherwise stop on "File name too long" halfway through its work."""
+    name_max, path_max = _limits()
+    proj = plan["project"]
+    base = plan.get("_root") or (str(Path(plan["_path"]).resolve().parent) if plan.get("_path") else os.getcwd())
+    cands = []   # (what, relative path)
+    spec_dir = proj.get("spec_dir")
+    if isinstance(spec_dir, str) and spec_dir.strip():
+        cands.append(("project.spec_dir", f"{spec_dir}/README.md"))
+        by_num = {m.get("number"): m for m in plan["milestones"]}
+        for m in plan["milestones"]:
+            if isinstance(m.get("folder"), str) and m["folder"]:
+                cands.append((f"milestone {m.get('number')}: folder", f"{spec_dir}/{m['folder']}/milestone.md"))
+        for it in plan["items"]:
+            ms = by_num.get(it.get("milestone"))
+            if _is_int(it.get("id")) and isinstance(it.get("slug"), str) and ms and isinstance(ms.get("folder"), str) and isinstance(proj.get("id_prefix"), str):
+                name = f"{proj['id_prefix']}-{it['id']:02d}".lower() + f"-{it['slug']}.md"
+                cands.append((f"item {it['id']}: slug", f"{spec_dir}/{ms['folder']}/{name}"))
+    gt = proj.get("ground_truth")
+    if isinstance(gt, str) and gt.strip():
+        cands.append(("project.ground_truth", re.sub(r"\.md$", ".index.txt", gt) if gt.endswith(".md") else gt))
+    for num, source in enumerate(plan.get("sources") or [], 1):
+        if not isinstance(source, dict):
+            continue
+        for field in ("source_path", "path"):
+            sp = source.get(field)
+            if isinstance(sp, str) and sp.strip():
+                rendered = re.sub(r"\.md$", ".index.txt", sp) if field == "path" and sp.endswith(".md") else sp
+                cands.append((f"sources entry {num}.{field}", rendered))
+    dsp = proj.get("dev_skill_path")
+    if isinstance(dsp, str) and dsp.strip():
+        cands.append(("project.dev_skill_path", f"{dsp}/references/ground-truth-map.md"))
+    out, seen = [], set()
+    for what, rel in cands:
+        for part in rel.replace("\\", "/").split("/"):
+            n = len(part.encode("utf-8", "replace"))
+            if n > name_max and (what, part) not in seen:
+                seen.add((what, part))
+                out.append(f"{what} makes the file or folder name {part[:40]!r}... {n} bytes long, more than the {name_max} the file system allows. Shorten it")
+        n = len((base.rstrip("/\\") + "/" + rel).encode("utf-8", "replace"))
+        if n >= path_max and what not in seen:
+            seen.add(what)
+            out.append(f"{what} makes the path {rel[:40]!r}... {n} bytes long with the project folder, more than the {path_max} the file system allows. Shorten it")
+    return out
+
+
+def _view_problems(plan, view):
+    """Problems with the declared layout: plan_format, plan_view and the handling block's state,
+    against the view the caller requires. A mismatch carries the reason code schema-view-mismatch."""
+    P = []
+    modern = is_modern(plan)
+    if not modern:
+        if view is not None:
+            P.append(f"plan_format: {PLAN_FORMAT} and plan_view: {view} are required for the {view} view, and project.handling "
+                     "must say state: migrated (schema-view-mismatch). Run step 0 of the ground-truth skill to migrate the plan")
+        return P
+    fmt = plan.get("plan_format")
+    if fmt is None:
+        P.append(f"plan_format: {PLAN_FORMAT} is required (a migrated plan declares its layout)")
+    elif not _is_int(fmt) or fmt != PLAN_FORMAT:
+        P.append(f"plan_format must be {PLAN_FORMAT}, got {fmt!r}. This script does not know that layout")
+    declared = plan.get("plan_view")
+    if declared is None:
+        P.append("plan_view is required: workspace or released")
+    elif declared not in PLAN_VIEWS:
+        P.append(f"plan_view must be workspace or released, got {declared!r}")
+    elif view is not None and declared != view:
+        P.append(f"plan_view is {declared}, but this check needs the {view} view (schema-view-mismatch)")
+    return P
+
+
+def _handling_problems(plan, mode):
+    """Problems with project.handling, the owner's answer to the one question. Values are never
+    echoed except the fixed vocabulary words."""
     P = []
     proj = plan["project"]
-    for k in ("name", "slug", "id_prefix"):
-        if not proj.get(k):
-            P.append(f"project.{k} is required")
-    if proj.get("repo") and not re.fullmatch(r"[\w.-]+/[\w.-]+", str(proj["repo"])):
-        P.append(f"project.repo must look like owner/name, got {proj['repo']!r}")
-    tracks = {t.get("id"): t for t in plan["tracks"]}
-    if not tracks:
-        P.append("tracks: at least one track is required")
-    people = {p.get("id"): p for p in plan["people"]}
+    h = proj.get("handling")
+    modern = is_modern(plan)
+    if h is None:
+        if modern:
+            P.append("project.handling is required in a migrated plan: policy_version, repo_audience_approved and state")
+        return P
+    if not isinstance(h, dict):
+        return P   # reported by type_problems
+    allowed = RELEASED_HANDLING_KEYS if mode == "released" else HANDLING_KEYS
+    for k in h:
+        if k in HANDLING_KEYS and k not in allowed:
+            P.append(f"project.handling.{k} is not allowed in a released plan. It stays in the private workspace plan")
+        elif k not in HANDLING_KEYS:
+            P.append(f"project.handling: unknown key {str(k)[:40]!r}")
+    if "policy_version" not in h:
+        P.append("project.handling.policy_version is required")
+    elif not _is_int(h["policy_version"]) or h["policy_version"] != 1:
+        P.append("project.handling.policy_version must be 1")
+    approved = h.get("repo_audience_approved")
+    if "repo_audience_approved" not in h:
+        P.append("project.handling.repo_audience_approved is required: true when everyone who can read the repository may see all the documents and staffing notes, else false")
+    elif not isinstance(approved, bool):
+        P.append("project.handling.repo_audience_approved must be true or false")
+    state = h.get("state")
+    if state is None:
+        P.append("project.handling.state is required: migrated")
+    elif state not in HANDLING_STATES:
+        P.append("project.handling.state must be legacy or migrated")
+    elif modern and state != "migrated":
+        P.append("project.handling.state must be migrated in a plan_format 2 plan")
+    elif not modern and state == "migrated":
+        P.append(f"plan_format: {PLAN_FORMAT} and plan_view are required when project.handling.state is migrated")
+    if mode != "released":
+        approvers = h.get("approvers")
+        if approvers is not None:
+            if not isinstance(approvers, list) or not all(isinstance(x, str) and _LOGIN_RE.match(x) for x in approvers):
+                P.append("project.handling.approvers must be a list of GitHub logins")
+        if approved is False and not approvers:
+            P.append("project.handling.approvers needs at least one GitHub login when repo_audience_approved is false")
+        retain = h.get("retain_raw_inputs")
+        if retain is not None and retain not in RETAIN_VALUES:
+            P.append("project.handling.retain_raw_inputs must be keep or delete-after-release")
+        down = h.get("downstream")
+        if isinstance(down, dict):
+            for k, v in down.items():
+                if k not in DOWNSTREAM_FLAGS:
+                    P.append(f"project.handling.downstream: unknown key {str(k)[:40]!r}")
+                elif k == "evidence":
+                    if v not in ("synthetic-only", "approved"):
+                        P.append("project.handling.downstream.evidence must be synthetic-only or approved")
+                elif not isinstance(v, bool):
+                    P.append(f"project.handling.downstream.{k} must be true or false")
+    grace = h.get("offline_grace_days")
+    if grace is not None and (not _is_int(grace) or not 0 <= grace <= 365):
+        P.append("project.handling.offline_grace_days must be a whole number of days from 0 to 365")
+    edits = h.get("engineer_edits")
+    if edits is not None and edits not in ENGINEER_EDITS:
+        P.append("project.handling.engineer_edits must be allowed or request-only")
+    return P
+
+
+def _clarification_problems(plan):
+    """Problems with the optional project.clarification block, the owner-approved routing of an engineer's
+    Rule clarification request. channel is mention or issue. A mention needs login, a GitHub login the owner
+    approved for publication. An issue needs issue, the number of an existing issue. Nothing else is allowed.
+    A login is a person's public name, so a value that is not a login is never echoed."""
+    P = []
+    block = (plan.get("project") or {}).get("clarification")
+    if block is None or not isinstance(block, dict):
+        return P            # absent is fine. A wrong type is reported by type_problems
+    for k in block:
+        if k not in CLARIFICATION_KEYS:
+            P.append(f"project.clarification: unknown key {str(k)[:40]!r}. Use channel, login or issue")
+    channel = block.get("channel")
+    if "channel" not in block:
+        P.append("project.clarification.channel is required: mention or issue")
+    elif channel not in CLARIFICATION_CHANNELS:
+        P.append("project.clarification.channel must be mention or issue")
+    login, issue = block.get("login"), block.get("issue")
+    if "login" in block and not (isinstance(login, str) and _LOGIN_RE.match(login)):
+        P.append("project.clarification.login must be a GitHub login")
+    if "issue" in block and not (_is_int(issue) and 1 <= issue <= 10 ** 9):
+        P.append("project.clarification.issue must be an issue number, a whole number of 1 or more")
+    if channel == "mention":
+        if "login" not in block:
+            P.append("project.clarification.login is required when the channel is mention")
+        if "issue" in block:
+            P.append("project.clarification.issue is not used when the channel is mention. Remove it")
+    elif channel == "issue":
+        if "issue" not in block:
+            P.append("project.clarification.issue is required when the channel is issue")
+        if "login" in block:
+            P.append("project.clarification.login is not used when the channel is issue. Remove it")
+    return P
+
+
+def _people_key_problems(plan):
+    """Staffing keys that a migrated plan must not hold: people[] fields and a top-level advisors
+    list. Locations are people:<id>:<field>, never a value."""
+    P = []
+    for n, p in enumerate(plan.get("people") or [], 1):
+        if not isinstance(p, dict):
+            continue
+        who = p.get("id") if isinstance(p.get("id"), str) and p.get("id") else f"#{n}"
+        for k in STAFFING_KEYS:
+            if k in p:
+                P.append(f"people:{who}:{k} is a staffing field. Keep it in people.yaml in the private workspace, not in plan.yaml")
+    if "advisors" in plan:
+        P.append("advisors is a staffing field. Keep advisors in people.yaml in the private workspace, not in plan.yaml")
+    return P
+
+
+def staffing_problems(plan, show_values=True):
+    """Problems with the facts that describe availability: start dates, days off and allocation, and
+    an item due on its owner's day off. A legacy plan holds them itself. A migrated plan holds them
+    in people.yaml, so this runs on the merged view. show_values False keeps the values out of the
+    messages, for people.yaml."""
+    P = []
+
+    def got(v):
+        return f", got {v!r}" if show_values else ""
+
     for p in plan["people"]:
-        if not p.get("id") or not p.get("name"):
-            P.append(f"people: each person needs id and name ({p})")
-        if p.get("track") not in tracks:
-            P.append(f"people: {p.get('id')} has unknown track {p.get('track')!r}")
         if p.get("start") is not None:
             if not _is_date(p["start"]):
-                P.append(f"people: {p.get('id')} start is not a date (use YYYY-MM-DD): {p['start']!r}")
+                P.append(f"people: {p.get('id')} start is not a date (use YYYY-MM-DD)" + (f": {p['start']!r}" if show_values else ""))
             elif _is_weekend(p["start"]):
-                P.append(f"people: {p.get('id')} start {p['start']} is a weekend")
+                P.append(f"people: {p.get('id')} start " + (f"{p['start']} " if show_values else "") + "is a weekend")
         if p.get("days_off") is not None and not isinstance(p.get("days_off"), list):
             P.append(f"people: {p.get('id')} days_off must be a list of dates, such as [2027-02-22]")
         for d in (p.get("days_off") if isinstance(p.get("days_off"), list) else []):
             if not _is_date(d):
-                P.append(f"people: {p.get('id')} days_off has a bad date {d!r}")
+                P.append(f"people: {p.get('id')} days_off has a bad date" + (f" {d!r}" if show_values else ""))
             elif _is_weekend(d):
-                P.append(f"people: {p.get('id')} day off {d} is a weekend")
-    for t in plan["tracks"]:
-        if not t.get("id") or not t.get("label"):
-            P.append(f"tracks: each track needs id and label ({t})")
+                P.append(f"people: {p.get('id')} day off " + (f"{d} " if show_values else "") + "is a weekend")
     for p in plan["people"]:
         al = p.get("allocation")
         if not isinstance(al, int) or isinstance(al, bool) or not (1 <= al <= 100):
-            P.append(f"people: {p.get('id')} allocation must be a whole percent from 1 to 100, got {al!r}")
+            P.append(f"people: {p.get('id')} allocation must be a whole percent from 1 to 100" + got(al))
+    people = {p.get("id"): p for p in plan["people"]}
+    for it in plan["items"]:
+        own = people.get(it.get("owner"))
+        if own and it.get("complete_by") and _is_date(it["complete_by"]) and it["complete_by"] in [str(x) for x in (own.get("days_off") or [])]:
+            P.append(f"item {it.get('id')}: complete_by " + (f"{it['complete_by']} " if show_values else "") + f"is a day off for {own['id']}")
+    return P
+
+
+def validate_plan(plan, view=None):
+    """Problems with a loaded plan, as a list of one-line messages.
+
+    view selects the rules. workspace is the owner's working plan. released is the exported plan: it
+    rejects personal staffing, private source metadata and original or rendering paths, and it needs
+    none of them. None keeps the legacy rules for a plan that has not been migrated, and follows the
+    plan's own plan_view for a migrated one. A migrated plan never carries staffing facts, so
+    capacity and day-off checks run on the merged view, through staffing_problems."""
+    P = []
+    mode = plan_mode(plan, view)
+    modern = is_modern(plan)
+    released = mode == "released"
+    P += _view_problems(plan, view)
+    if modern:
+        P += _people_key_problems(plan)
+    # Detect collisions before any dictionary below can hide a record.
+    for group, rows, key in (("tracks", plan["tracks"], "id"),
+                              ("track labels", plan["tracks"], "label"),
+                              ("people", plan["people"], "id"),
+                              ("external.items", plan["external"]["items"], "id"),
+                              ("checkpoints", plan["checkpoints"], "date")):
+        seen = set()
+        for row in rows:
+            value = row.get(key)
+            identity = value.casefold() if group == "track labels" and isinstance(value, str) else value
+            if identity in seen:
+                P.append(f"{group}: duplicate {key} {value!r}. Preview recovery with plan_repair.py --root .")
+            seen.add(identity)
+    work_ids = {it.get("id") for it in plan["items"]}
+    for row in plan["external"]["items"]:
+        if row.get("id") in work_ids:
+            P.append(f"external.items: id {row.get('id')} conflicts with a work item. Preview plan_repair.py")
+    proj = plan["project"]
+    for k in ("name", "slug", "id_prefix"):
+        if not proj.get(k):
+            P.append(f"project.{k} is required")
+    if proj.get("slug") and not (SLUG_RE.fullmatch(proj["slug"]) and len(proj["slug"]) <= MAX_LABEL):
+        P.append(f"project.slug must be lowercase words joined by hyphens, at most {MAX_LABEL} characters (it is the GitHub label of every issue), got {proj['slug'][:80]!r}")
+    if proj.get("id_prefix") and not (ID_PREFIX_RE.fullmatch(proj["id_prefix"]) and len(proj["id_prefix"]) <= 20):
+        P.append(f"project.id_prefix must be letters and digits that start with a letter, at most 20, such as WI, got {proj['id_prefix'][:40]!r}")
+    for k in _PROJECT_TEXT:
+        if not _one_line(proj.get(k)):
+            P.append(f"project.{k} must be one line, with no line break or control character")
+    tf = title_format_problem(proj.get("title_format"))
+    if tf:
+        P.append(tf)
+    P += path_problems(plan)
+    P += _handling_problems(plan, mode)
+    P += _clarification_problems(plan)
+    if proj.get("repo") and not repo_ok(proj["repo"]):
+        P.append(f"project.repo must look like owner/name, got {proj['repo']!r}")
+    # A released plan needs no original and no rendering: project.ground_truth is optional there and
+    # is never an input to citation checks, so no default path is invented for it.
+    for k, example in (("spec_dir", "docs/spec"), ("ground_truth", "docs/ground-truth/architecture.md")):
+        v = str(proj.get(k) or "")
+        if released and k == "ground_truth" and k not in proj:
+            continue
+        if not v.strip():
+            P.append(f"project.{k} is empty. Leave the line out for the default {example}, or give a path")
+        elif not relative_inside(v):
+            P.append(f"project.{k} must be a path inside the project, such as {example}, got {v!r}")
+    handling = proj.get("handling") if isinstance(proj.get("handling"), dict) else {}
+    source_ids = set()
+    for num, source in enumerate(plan.get("sources") or [], 1):
+        sid, path, source_path = source.get("id", ""), source.get("path", ""), source.get("source_path", "")
+        if not sid:
+            P.append(f"sources entry {num}: id is required, such as architecture or governance")
+        elif not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", sid):
+            P.append(f"sources entry {num}: id must be lowercase words joined by hyphens, got {sid!r}")
+        elif sid in source_ids:
+            P.append(f"sources entry {num}: duplicate id {sid!r}")
+        source_ids.add(sid)
+        if not source.get("name"):
+            P.append(f"sources entry {num}: name is required")
+        label = sid if isinstance(sid, str) and sid else f"#{num}"
+        if released:
+            # Only the id, the owner's display name and the version are exported. Where the original
+            # or the rendering lives, how the owner classified it and its digests stay private.
+            for k in PRIVATE_SOURCE_KEYS:
+                if k in source:
+                    P.append(f"sources:{label}:{k} is not allowed in a released plan. It stays in the private workspace plan")
+            if not str(source.get("version") or "").strip():
+                P.append(f"sources:{label}:version is required in a released plan")
+            continue
+        status = source.get("status") or "reviewed"
+        if status not in ("reviewed", "unreadable"):
+            P.append(f"sources entry {num}: status must be reviewed or unreadable, got {status!r}")
+        if status == "reviewed" and not path:
+            P.append(f"sources entry {num}: path is required when status is reviewed")
+        elif path and not relative_inside(path):
+            P.append(f"sources entry {num}.path must be inside the project, got {path!r}")
+        if status == "unreadable" and not source.get("limit"):
+            P.append(f"sources entry {num}: limit is required when status is unreadable")
+        if source_path and not relative_inside(source_path):
+            P.append(f"sources entry {num}.source_path must be inside the project, got {source_path!r}")
+        if modern:
+            cls = source.get("classification")
+            if cls is None:
+                P.append(f"sources:{label}:classification is required: repo-readers, restricted or public")
+            elif cls not in CLASSIFICATIONS:
+                P.append(f"sources:{label}:classification must be repo-readers, restricted or public, got {str(cls)[:40]!r}")
+            elif cls == "restricted" and handling.get("repo_audience_approved") is True:
+                P.append(f"sources:{label}: classification is restricted, but project.handling.repo_audience_approved is true. "
+                         "Change the answer to the one question, or classify the source repo-readers")
+            for k in ("content_sha256", "rendering_sha256"):
+                if source.get(k) is not None and not (isinstance(source[k], str) and _HEX64_RE.match(source[k])):
+                    P.append(f"sources:{label}:{k} must be 64 lowercase hexadecimal characters")
+    reviewed_paths = {s.get("path") for s in plan.get("sources") or [] if (s.get("status") or "reviewed") == "reviewed"}
+    if released:
+        pass   # source paths are not exported, so there is nothing to match project.ground_truth against
+    elif plan.get("sources") and not reviewed_paths:
+        P.append("sources must include at least one reviewed entry. Continue with every readable source, but stop when none can be processed")
+    elif plan.get("sources") and proj.get("ground_truth") not in reviewed_paths:
+        P.append("project.ground_truth must match the path of one reviewed sources entry")
+    for it in plan["items"]:
+        refs = it.get("source_refs") or []
+        if it.get("state") is not None and it["state"] not in ("open", "closed"):
+            P.append(f"item {it.get('id')}: state must be open or closed when explicitly planned")
+        if not refs and not item_source_refs(plan, it):
+            P.append(f"item {it.get('id')}: plan-level source_refs is required. Preview plan_repair.py; select a reviewed source and explicit sections")
+        seen_refs = set()
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            sid = ref.get("source", "")
+            if not sid:
+                P.append(f"item {it.get('id')}: each source_refs entry needs source")
+            elif sid not in source_ids:
+                P.append(f"item {it.get('id')}: source_refs names unknown source {sid!r}")
+            elif next((s for s in plan.get("sources") or [] if s.get("id") == sid and (s.get("status") or "reviewed") == "unreadable"), None):
+                P.append(f"item {it.get('id')}: source_refs cannot cite unreadable source {sid!r}")
+            elif sid in seen_refs:
+                P.append(f"item {it.get('id')}: source_refs repeats source {sid!r}")
+            seen_refs.add(sid)
+            if not str(ref.get("sections") or "").strip():
+                P.append(f"item {it.get('id')}: source_refs for {sid or 'an unnamed source'} needs sections")
+    tracks = {t.get("id"): t for t in plan["tracks"]}
+    if not tracks:
+        P.append("tracks: at least one track is required")
+    people = {p.get("id"): p for p in plan["people"]}
+    for n, p in enumerate(plan["people"], 1):
+        # A migrated plan names a person by id only: the name is a staffing field kept in people.yaml.
+        if not p.get("id") or (not modern and not p.get("name")):
+            P.append(f"people: each person needs id{'' if modern else ' and name'} (entry {n})")
+        if p.get("track") not in tracks:
+            P.append(f"people: {p.get('id')} has unknown track {p.get('track')!r}")
+    if not modern:
+        P += staffing_problems(plan)
+    for n, t in enumerate(plan["tracks"], 1):
+        if not t.get("id") or not t.get("label"):
+            P.append(f"tracks: each track needs id and label (track entry {n})")
+        elif len(t["id"]) > MAX_LABEL or not _one_line(t["id"]) or "," in t["id"]:
+            P.append(f"tracks: id {t['id'][:60]!r} is a GitHub label, so it is one line with no comma, at most {MAX_LABEL} characters")
+        if not _one_line(t.get("label")):
+            P.append(f"tracks: {t.get('id')} label must be one line")
     for p in plan["people"]:
         if "derived" in p and not isinstance(p["derived"], bool):
             P.append(f"people: {p.get('id')} derived must be true or false")
+    if released and plan["banned"].get("names"):
+        P.append("banned:names is not allowed in a released plan. Names to keep out of the specifications stay in people.yaml in the private workspace")
+    if isinstance(proj.get("epic_title"), str) and len(proj["epic_title"]) > MAX_TITLE:
+        P.append(f"project.epic_title is {len(proj['epic_title'])} characters. GitHub takes at most {MAX_TITLE}")
     tg = plan.get("target")
     if tg is None:
         pass   # the target is optional. Without one, the plan's end date is derived from the critical path
@@ -611,7 +2034,7 @@ def validate_plan(plan):
             P.append("target: give either date or weeks, not both")
         if "date" in tg and not _is_date(tg.get("date")):
             P.append(f"target: date is not a date: {tg.get('date')!r}")
-        if "weeks" in tg and (not isinstance(tg["weeks"], int) or isinstance(tg["weeks"], bool) or tg["weeks"] < 1):
+        if "weeks" in tg and (not isinstance(tg["weeks"], int) or isinstance(tg["weeks"], bool) or not 1 <= tg["weeks"] <= MAX_WEEKS):
             P.append(f"target: weeks must be a whole number of working weeks, got {tg['weeks']!r}")
     for m in plan["milestones"]:
         for k in RATIONALE_MILESTONE_KEYS:
@@ -631,6 +2054,13 @@ def validate_plan(plan):
         for k in ("name", "folder", "start", "end", "demo", "gate"):
             if not m.get(k):
                 P.append(f"milestone {n}: {k} is required")
+        for k in ("name", "folder"):
+            if not _one_line(m.get(k)):
+                P.append(f"milestone {n}: {k} must be one line, with no line break or control character")
+        if isinstance(m.get("name"), str) and isinstance(proj.get("subepic_prefix"), str):
+            title = f"{proj['subepic_prefix']} {n}, {m['name']}"
+            if len(title) > MAX_TITLE:
+                P.append(f"milestone {n}: the sub-epic title is {len(title)} characters. GitHub takes at most {MAX_TITLE}. Shorten the name")
         if all(_is_date(m.get(k)) for k in ("start", "end", "demo") if m.get(k)) and m.get("start") and m.get("end"):
             s, e = parse_date(m["start"]), parse_date(m["end"])
             if e < s:
@@ -655,24 +2085,29 @@ def validate_plan(plan):
         for k in ("name", "start", "end"):
             if not br.get(k):
                 P.append(f"breaks: {k} is required")
+        for k in ("start", "end"):
+            if br.get(k) and not _is_date(br[k]):
+                P.append(f"break {br.get('name')!r}: {k} is not a date (use YYYY-MM-DD): {br[k]!r}")
         if br.get("start") and br.get("end") and _is_date(br["start"]) and _is_date(br["end"]):
             bs, be = parse_date(br["start"]), parse_date(br["end"])
+            if be < bs:
+                P.append(f"break {br.get('name')!r}: end is before start")
             for m in plan["milestones"]:
                 if m.get("start") and m.get("end") and _is_date(m["start"]) and _is_date(m["end"]):
                     if parse_date(m["start"]) <= be and bs <= parse_date(m["end"]):
-                        P.append(f"break {br['name']!r} overlaps milestone {m['number']}")
+                        P.append(f"break {br.get('name')!r} overlaps milestone {m.get('number')}")
     cps = {}
-    for c in plan["checkpoints"]:
+    for n, c in enumerate(plan["checkpoints"], 1):
         if not c.get("date") or not _is_date(c.get("date")) or not c.get("name"):
-            P.append(f"checkpoints: need date and name ({c})")
+            P.append(f"checkpoints: need date and name (checkpoint entry {n})")
         else:
             cps[c["date"]] = c
             if _is_weekend(c["date"]):
                 P.append(f"checkpoint {c['date']} is a weekend")
     ext_ids = set()
-    for pi in plan["external"]["items"]:
+    for n, pi in enumerate(plan["external"]["items"], 1):
         if not isinstance(pi.get("id"), int) or not pi.get("label"):
-            P.append(f"external.items: each needs integer id and label ({pi})")
+            P.append(f"external.items: each needs integer id and label (external item entry {n})")
         else:
             ext_ids.add(pi["id"])
     ids = []
@@ -681,7 +2116,7 @@ def validate_plan(plan):
     for it in plan["items"]:
         iid = it.get("id")
         if not isinstance(iid, int):
-            P.append(f"items: id must be an integer ({it.get('label')!r})")
+            P.append("items: id must be an integer (an item has none, or one that is not a whole number)")
             continue
         if iid in ids:
             P.append(f"item {iid}: duplicate id")
@@ -692,6 +2127,12 @@ def validate_plan(plan):
         for k in ("slug", "label", "milestone", "track", "complete_by", "checkpoint"):
             if it.get(k) in (None, ""):
                 P.append(f"item {iid}: {k} is required")
+        if not _one_line(it.get("label")):
+            P.append(f"item {iid}: label must be one line, with no line break or control character")
+        elif it.get("label") and isinstance(proj.get("id_prefix"), str) and not tf and isinstance(proj.get("title_format"), str):
+            title = format_title(proj["title_format"], f"{proj['id_prefix']}-{iid:02d}", it["label"])
+            if len(title) > MAX_TITLE:
+                P.append(f"item {iid}: the issue title is {len(title)} characters. GitHub takes at most {MAX_TITLE}. Shorten the label")
         if it.get("slug") and not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", str(it["slug"])):
             P.append(f"item {iid}: slug must be lowercase words joined by hyphens")
         if it.get("track") not in tracks:
@@ -713,11 +2154,35 @@ def validate_plan(plan):
                 P.append(f"item {iid}: complete_by {it['complete_by']} is outside milestone {it['milestone']} ({ms['start']} to {ms['end']})")
             if d.weekday() >= 5:
                 P.append(f"item {iid}: complete_by {it['complete_by']} is a weekend")
-            own = people.get(it.get("owner"))
-            if own and it["complete_by"] in [str(x) for x in (own.get("days_off") or [])]:
-                P.append(f"item {iid}: complete_by {it['complete_by']} is a day off for {own['id']}")
+        if modern and "restricted" in it:
+            # Restricted items (a later work package) are omitted from the exported plan, so the flag
+            # and the owner's summary are never exported. The summary is the owner's text for a placeholder.
+            if released:
+                P.append(f"items:{iid}:restricted is not allowed in a released plan. Restricted items are omitted from it")
+            elif not isinstance(it["restricted"], bool):
+                P.append(f"items:{iid}:restricted must be true or false")
+            elif it["restricted"] and not str(it.get("restricted_summary") or "").strip():
+                P.append(f"items:{iid}:restricted_summary is required when the item is restricted")
+        if modern and not released and it.get("restricted") is not True:
+            for k, _longest in RESTRICTED_TEXT_KEYS:
+                if k in it:
+                    P.append(f"items:{iid}:{k} is only for an item with restricted: true")
+        if modern and not released and it.get("restricted") is True:
+            for k, longest in RESTRICTED_TEXT_KEYS:
+                if k in it and isinstance(it[k], str):
+                    if not _one_line(it[k]):
+                        P.append(f"items:{iid}:{k} must be one line, with no line break or control character")
+                    elif len(it[k].strip()) > longest:
+                        P.append(f"items:{iid}:{k} is longer than {longest} characters")
+            if "restricted_placeholder" in it and not str(it["restricted_placeholder"]).strip():
+                P.append(f"items:{iid}:restricted_placeholder is empty. Leave it out, or write the instruction engineers are shown")
+        for k, _longest in RESTRICTED_TEXT_KEYS:
+            if released and k in it:
+                P.append(f"items:{iid}:{k} is not allowed in a released plan")
         if it.get("size") and not re.search(r"about \d+(?:\.\d+)?", str(it["size"])):
             P.append(f"item {iid}: size must say how many days, as in \"Medium, about 4 days\", got {it['size']!r}")
+        elif sized_days(it) > MAX_SIZE_DAYS:
+            P.append(f"item {iid}: size of {sized_days(it):g} days is more than {MAX_SIZE_DAYS} working days. Split the item")
         if it.get("checkpoint") and it["checkpoint"] not in cps:
             P.append(f"item {iid}: checkpoint {it['checkpoint']!r} is not in checkpoints")
         elif it.get("checkpoint") and it.get("complete_by") and _is_date(it["complete_by"]):
@@ -789,9 +2254,13 @@ def section_text(spec, *names):
 def say(msg=""):
     try:
         print(msg, flush=True)
-    except BrokenPipeError:
-        # The reader closed the pipe, as `| head` does. Stop quietly: send the rest of the
-        # output to the null device so the exit flush raises nothing, then exit.
+    except OSError as e:
+        # The reader closed the pipe, as `| head` does. POSIX raises BrokenPipeError (EPIPE).
+        # Windows raises OSError with EINVAL. Any other error is real and is raised.
+        if not isinstance(e, BrokenPipeError) and e.errno not in (errno.EPIPE, errno.EINVAL):
+            raise
+        # Stop quietly: send the rest of the output to the null device so the exit flush
+        # raises nothing, then exit.
         try:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         except (OSError, ValueError):
@@ -805,10 +2274,14 @@ def die(msg, code=2):
 
 
 def repo_parts(plan, override=None):
-    repo = override or plan["project"].get("repo")
-    if not repo or "/" not in repo:
+    if override is not None and not str(override).strip():
+        die("--repo is empty. Give the repository as owner/name, or leave out --repo to use project.repo in plan.yaml")
+    repo = override if override is not None else plan["project"].get("repo")
+    if not repo:
         die("no repository. Set project.repo in plan.yaml or pass --repo owner/name")
-    owner, name = repo.split("/", 1)
+    if not repo_ok(repo):
+        die(f"the repository must look like owner/name, such as my-org/my-repo, got {repo!r}")
+    owner, name = str(repo).split("/", 1)
     return owner, name
 
 
@@ -848,6 +2321,78 @@ def checkpoint_of(plan, it):
     return None
 
 
+def ground_truth_sources(plan):
+    """The rendered source documents in precedence order, highest first.
+
+    Plans written before multiple sources were supported keep using project.ground_truth.
+    """
+    sources = plan.get("sources") or []
+    if sources:
+        return sources
+    return [{
+        "id": "ground-truth",
+        "name": "Ground truth",
+        "source_path": plan["project"].get("ground_truth", ""),
+        "path": plan["project"].get("ground_truth", ""),
+        "use": "Full specification. Section numbers in the work item files refer to it.",
+        "status": "reviewed",
+    }]
+
+
+def rendered_sources(plan):
+    return [source for source in ground_truth_sources(plan) if (source.get("status") or "reviewed") == "reviewed"]
+
+
+def source_by_id(plan):
+    return {source["id"]: source for source in ground_truth_sources(plan)}
+
+
+def explicit_sections(citation):
+    """Section numbers only after an explicit section label, never a file version or item ID."""
+    found = []
+    pattern = r"(?i)\bsections?\s+([0-9]+(?:\.[0-9]+)*(?:(?:\s*,\s*|\s+and\s+|\s*&\s*)[0-9]+(?:\.[0-9]+)*)*)"
+    for match in re.finditer(pattern, citation or ""):
+        found.extend(re.findall(r"\d+(?:\.\d+)*", match.group(1)))
+    return list(dict.fromkeys(found))
+
+
+def item_source_refs(plan, it):
+    """Structured source references, with a legacy reference to project.ground_truth as fallback."""
+    if it.get("source_refs"):
+        return it["source_refs"]
+    cite = it.get("ground_truth") or ""
+    if not cite:
+        return []
+    reviewed = rendered_sources(plan)
+    if not reviewed:
+        return []
+    matches = [s for s in reviewed if any(str(v).casefold() in cite.casefold()
+               for v in (s.get("id"), s.get("name"), s.get("path")) if v)]
+    if len(matches) != 1:
+        matches = [s for s in reviewed if s.get("path") == plan["project"].get("ground_truth")] if not matches else []
+    if len(matches) != 1 or not explicit_sections(cite):
+        return []
+    primary = matches[0]
+    return [{"source": primary["id"], "sections": ", ".join(explicit_sections(cite))}]
+
+
+def ground_truth_citation(plan, it):
+    """Human-readable source citations for specification headers and GitHub issues."""
+    refs = item_source_refs(plan, it)
+    if not refs:
+        return ""
+    if it.get("ground_truth") and (not it.get("source_refs") or (plan.get("_view") or plan.get("plan_view")) == "released"):
+        # the owner's own words. In a released plan an item holds both only when the release resolved
+        # that text into source_refs (_released_item), and its specification still shows the text
+        return it["ground_truth"]
+    sources = source_by_id(plan)
+    parts = []
+    for ref in refs:
+        source = sources.get(ref.get("source"), {})
+        parts.append(f"{source.get('name', ref.get('source', 'Source'))}: Sections {ref.get('sections', '')}")
+    return "; ".join(parts)
+
+
 def expected_header(plan, it):
     """Ordered (name, value) pairs for the header table of a work item specification."""
     ms = milestone_by_num(plan)[it["milestone"]]
@@ -866,7 +2411,7 @@ def expected_header(plan, it):
         ("Size", it.get("size") or "To be sized"),
         ("Depends on", tags),
         ("Unblocks", unb),
-        ("Ground truth", it.get("ground_truth") or "To be cited"),
+        ("Ground truth", ground_truth_citation(plan, it) or "To be cited"),
     ]
     return rows
 
@@ -1252,7 +2797,7 @@ def earliest_finish(plan):
         if own and own > start:
             start = own
         for d in it["depends"]:
-            if d in items and d not in stack:
+            if d in items and d != n and d not in stack:   # a self-dependency or a cycle is reported by validate_plan
                 fin = visit(d, stack + (n,))[1] + _dt.timedelta(days=1)
                 if fin > start:
                     start, prev = fin, d
@@ -1260,7 +2805,7 @@ def earliest_finish(plan):
             start += _dt.timedelta(days=1)
         need = needed_days(plan, it)
         finish, done = start, 0.0
-        while True:
+        while (finish - start).days < 40000:   # a bound for a size the validator rejects
             if _is_working(finish, off):
                 done += 1
                 if done + 1e-9 >= need:
@@ -1273,9 +2818,9 @@ def earliest_finish(plan):
         visit(n)
     end = max(memo, key=lambda n: (memo[n][1], n))
     chain, n = [], end
-    while n is not None:
+    while n is not None and n not in chain:
         chain.append(n)
-        n = via[n]
+        n = via.get(n)
     return memo, chain[::-1]
 
 
@@ -1319,7 +2864,7 @@ def target_date(plan):
         return None, "no target"
     if "date" in tg and _is_date(tg["date"]):
         return parse_date(tg["date"]), f"{tg['date']}"
-    if isinstance(tg.get("weeks"), int):
+    if _is_int(tg.get("weeks")) and 1 <= tg["weeks"] <= MAX_WEEKS:
         start = parse_date(plan["milestones"][0]["start"])
         break_days = sum((parse_date(b["end"]) - parse_date(b["start"])).days + 1 for b in plan["breaks"] if _is_date(b.get("start")) and _is_date(b.get("end")))
         break_weeks = -(-break_days // 7)
